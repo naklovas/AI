@@ -37,6 +37,7 @@ app.MapGet("/api/ayarlar", (YzAyarlari a, ExcelAyarlari e) => new
     paralellik = a.Paralellik,
     onElemeYap = a.OnElemeYap,
     adayEkipSayisi = a.AdayEkipSayisi,
+    servisAciklamasi = a.ServisAciklamasiGonder ? (a.ServisAciklamaMaksKarakter > 0 ? $"ilk {a.ServisAciklamaMaksKarakter} karakter" : "tamamı") : "gönderilmiyor",
     maksEkipSayisi = a.MaksEkipSayisi,
     kullaniciEkipKolonu = e.KullaniciEkipKolonu,
     kullaniciNotKolonu = e.KullaniciNotKolonu,
@@ -115,6 +116,8 @@ class YzAyarlari
     public int AdayEkipSayisi { get; set; } = 20;
     public int EkipBasinaServisSayisi { get; set; } = 12;
     public int MaksEkipSayisi { get; set; } = 3;
+    public bool ServisAciklamasiGonder { get; set; } = true;
+    public int ServisAciklamaMaksKarakter { get; set; } = 250;
 }
 
 class ExcelAyarlari
@@ -123,13 +126,14 @@ class ExcelAyarlari
     public string KullaniciNotKolonu { get; set; } = "F";
     public string CiktiEkipBasligi { get; set; } = "YZ Önerilen Ekipler ve Görevleri";
     public string CiktiGerekceBasligi { get; set; } = "YZ Karar Gerekçesi";
+    public string KatalogAciklamaKolonu { get; set; } = "F";
 }
 
 // =====================================================================
 // MODELLER
 // =====================================================================
 
-record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kategori);
+record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kategori, string Aciklama);
 
 record Mesaj(string role, string content);
 
@@ -164,6 +168,7 @@ class KontrolSatiri
     public string Hata = "";
     public string HamCevap = "";
     public List<string> Adaylar = [];
+    public int PromptKarakter;
 
     public string EkipMetni() => string.Join("\n", Ekipler.Select(e =>
         $"• {e.Ekip} ({e.Rol}){(e.KatalogdaVar ? "" : " [katalogda bulunamadı]")}: {e.Gorev}"));
@@ -195,6 +200,7 @@ class AnalizIsi
         hatali = Kontrol.Satirlar.Count(s => s.Durum == "Hata"),
         ekipSayisi = Katalog.Ekipler.Count,
         servisSayisi = Katalog.Ekipler.Sum(e => e.Servisler.Count),
+        aciklamaliServis = Katalog.Ekipler.Sum(e => e.Servisler.Count(sv => sv.Aciklama.Length > 0)),
         ekipler = Katalog.Ekipler.Select(e => e.Ad),
         satirlar = Kontrol.Satirlar.Select(s => new
         {
@@ -212,7 +218,8 @@ class AnalizIsi
             uyum = s.Uyum,
             hata = s.Hata,
             hamCevap = s.HamCevap,
-            adaylar = s.Adaylar
+            adaylar = s.Adaylar,
+            promptKarakter = s.PromptKarakter
         })
     };
 }
@@ -289,8 +296,12 @@ class Katalog
             e.AdKokleri = Metin.Kokler(e.Ad).ToHashSet();
             foreach (var k in e.AdKokleri) e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 3; // ekip adı daha ağırlıklı
             foreach (var sv in e.Servisler)
+            {
                 foreach (var k in Metin.Kokler(sv.Ad))
                     e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 1;
+                foreach (var k in Metin.Kokler(sv.Aciklama))
+                    e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 0.5; // açıklama daha uzun ve gürültülü
+            }
             e.Uzunluk = e.Kokler.Values.Sum();
         }
         ortUzunluk = Ekipler.Count == 0 ? 1 : Math.Max(1, Ekipler.Average(e => e.Uzunluk));
@@ -379,7 +390,9 @@ class Katalog
 
     /// Bir ekibin servislerini maddeyle en ilgili olanlar önde olacak şekilde sıralar.
     public IEnumerable<Servis> IlgiliServisler(Ekip e, Dictionary<string, double> q) =>
-        e.Servisler.OrderByDescending(sv => Metin.Kokler(sv.Ad).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0));
+        e.Servisler.OrderByDescending(sv =>
+            Metin.Kokler(sv.Ad).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0) +
+            0.5 * Metin.Kokler(sv.Aciklama).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0));
 }
 
 // =====================================================================
@@ -426,7 +439,7 @@ static class ExcelIslemleri
         return null;
     }
 
-    public static Katalog KatalogOku(byte[] bytes)
+    public static Katalog KatalogOku(byte[] bytes, ExcelAyarlari ayar)
     {
         using var wb = Ac(bytes, "Servis kataloğu");
         var bulunan = BaslikBul(wb, b => b.Any(x => x.Contains("servis")) && b.Any(x => x.Contains("sahibi") || x.Contains("bolum")))
@@ -438,6 +451,9 @@ static class ExcelIslemleri
 
         int kod = Kolon("servis kodu", "kod"), ad = Kolon("servis adi", "servis ad"), bolum = Kolon("sahibi bolum", "sahibi", "bolum"),
             yonetici = Kolon("yonetici"), kategori = Kolon("kategori");
+        // Servis açıklaması: önce "Açıklama" başlığı aranır, bulunamazsa ayardaki kolon harfi (varsayılan F) kullanılır
+        int aciklama = Kolon("aciklama", "tanim");
+        if (aciklama == 0 && !string.IsNullOrWhiteSpace(ayar.KatalogAciklamaKolonu)) aciklama = KolonNo(ayar.KatalogAciklamaKolonu);
         if (ad == 0 || bolum == 0)
             throw new ExcelOkumaHatasi("Servis kataloğunda 'Servis Adı' veya 'Servis Sahibi Bölüm' kolonu bulunamadı.");
 
@@ -447,7 +463,8 @@ static class ExcelIslemleri
         for (int i = baslik + 1; i <= sonSatir; i++)
         {
             var r = ws.Row(i);
-            var sv = new Servis(Al(r, kod), Al(r, ad), Al(r, bolum), Al(r, yonetici), Al(r, kategori));
+            var sv = new Servis(Al(r, kod), Al(r, ad), Al(r, bolum), Al(r, yonetici), Al(r, kategori),
+                Regex.Replace(Al(r, aciklama), @"\s+", " ").Trim());
             if (sv.Ad.Length > 0 && sv.Bolum.Length > 0) servisler.Add(sv);
         }
 
@@ -586,7 +603,9 @@ static class PromptOlusturucu
             sb.AppendLine($"### {e.Ad}");
             var servisler = tumu ? e.Servisler : katalog.IlgiliServisler(e, q);
             foreach (var sv in servisler.Take(servisSiniri))
-                sb.AppendLine($"  - {sv.Ad}");
+                sb.AppendLine(ayar.ServisAciklamasiGonder && sv.Aciklama.Length > 0
+                    ? $"  - {sv.Ad}: {(ayar.ServisAciklamaMaksKarakter > 0 ? Metin.Kisalt(sv.Aciklama, ayar.ServisAciklamaMaksKarakter) : sv.Aciklama)}"
+                    : $"  - {sv.Ad}");
             if (e.Servisler.Count > servisSiniri)
                 sb.AppendLine($"  - ... (+{e.Servisler.Count - servisSiniri} servis daha)");
         }
@@ -769,7 +788,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
             DosyaAdi = dosyaAdi,
             KontrolBytes = kontrolBytes,
             Kontrol = ExcelIslemleri.KontrolOku(kontrolBytes, excelAyar),
-            Katalog = ExcelIslemleri.KatalogOku(katalogBytes)
+            Katalog = ExcelIslemleri.KatalogOku(katalogBytes, excelAyar)
         };
         isler[analiz.Id] = analiz;
         log.LogInformation("İş {Id} başladı: {Satir} madde, {Ekip} ekip", analiz.Id, analiz.Kontrol.Satirlar.Count, analiz.Katalog.Ekipler.Count);
@@ -821,6 +840,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
         var kullaniciMesaji = PromptOlusturucu.Olustur(s, katalog, adaylar, ayar);
         // Qwen3'ün "yumuşak" düşünme kapatma komutu; chat_template_kwargs'ı tanımayan sunucularda da işe yarar
         if (ayar.DusunmeyiKapat) kullaniciMesaji += "\n/no_think";
+        s.PromptKarakter = kullaniciMesaji.Length + PromptOlusturucu.Sistem.Length;
         var mesajlar = new List<Mesaj> { new("system", PromptOlusturucu.Sistem), new("user", kullaniciMesaji) };
         string sonHata = "";
 

@@ -171,7 +171,7 @@ const dosyalar = { kontrol: null, katalog: null };
 
 // ---------- ayarlar ----------
 fetch('/api/ayarlar').then(r => r.json()).then(a => {
-  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 
@@ -244,7 +244,7 @@ function guncelle(j) {
   const bitti = j.tamamlanan + j.hatali + j.satirlar.filter(s => s.durum === 'İptal').length;
   $('#barIc').style.width = (100 * bitti / Math.max(1, j.toplam)) + '%';
   $('#durumMetni').textContent = `${j.dosyaAdi} · ${j.durum}`;
-  $('#sayac').textContent = `${bitti} / ${j.toplam} madde · ${j.ekipSayisi} ekip, ${j.servisSayisi} servis`;
+  $('#sayac').textContent = `${bitti} / ${j.toplam} madde · ${j.ekipSayisi} ekip, ${j.servisSayisi} servis (${j.aciklamaliServis} açıklamalı)`;
   $('#btnIptal').classList.toggle('gizli', j.durum !== 'Çalışıyor');
   $('#btnHatalilar').classList.toggle('gizli', !j.satirlar.some(s => s.durum === 'Hata' || s.durum === 'İptal') || j.durum === 'Çalışıyor');
 
@@ -257,6 +257,7 @@ function guncelle(j) {
     stat(j.tamamlanan, 'Tamamlanan', { fDurum: 'Tamam' }) +
     stat(j.hatali, 'Hatalı', { fDurum: 'Hata' }) +
     stat('%' + ort, 'Ortalama güven') +
+    stat(promptTahmini(j), 'Prompt boyutu / madde') +
     stat(tamam.filter(s => (s.guven ?? 0) < 60).length, 'Düşük güven (<60)', { fGuven: 0, fGuvenMax: 55 }) +
     stat(say('Aynı'), 'Seninle aynı', { fUyum: 'Aynı' }) +
     stat(say('Kısmi'), 'Kısmen aynı', { fUyum: 'Kısmi' }) +
@@ -298,6 +299,13 @@ function filtreleriDoldur(j, ilk) {
     secenekDoldur($('#fEkip'), [...onerilen].sort(tr));
 }
 ['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum', '#fGuven', '#fGuvenMax'].forEach(id => $(id).addEventListener('input', ciz));
+// Türkçe metinde kabaca 3 karakter ≈ 1 token
+function promptTahmini(j) {
+  const olcum = j.satirlar.map(s => s.promptKarakter).filter(n => n > 0);
+  if (!olcum.length) return '—';
+  const ort = olcum.reduce((a, b) => a + b, 0) / olcum.length;
+  return '~' + Math.round(ort / 3 / 1000) + ' bin token';
+}
 function filtreTemizle() {
   ['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum'].forEach(id => $(id).value = '');
   $('#fGuven').value = 0; $('#fGuvenMax').value = 100;
