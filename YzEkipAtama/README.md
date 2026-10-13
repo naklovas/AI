@@ -36,6 +36,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 ## Kullanım
 
 - **Servis kataloğu** bir kez yüklenir. Uygulama `veri/son_katalog.xlsx` dosyasında saklar; uygulama yeniden başlasa da tekrar yüklemek gerekmez. Yeni bir dosya yüklenene kadar bu katalog kullanılır.
+- **Prosedür listesi** (isteğe bağlı) de bir kez yüklenir ve `veri/` altında saklanır. Doküman Adı (D) ve Süreç Sahibi Birim (H) başlıklardan, başlık yoksa bu harflerden okunur. Yalnızca `Durum = True` satırlar alınır. Her madde için anahtar kelimeyle en ilgili `IlgiliProsedurSayisi` (varsayılan 15) prosedür, süreç sahibi birimiyle birlikte modele gönderilir. Süreç sahibi birim, katalogdaki ekiple eşleştirilir. Model ilgili prosedürleri `PROSEDUR: <doküman kodu> | <ilişki>` satırlarıyla döner; listede olmayan kodlar atılır. Sonuçlar gridde (linkli) ve Excel'de üçüncü kolon (*YZ İlgili Mevcut Prosedürler*) olarak gösterilir.
 - **Metinle sor** sekmesine yapılacak işi yazıp **Ekipleri Bul**'a basın. Sorumlu ve destek ekipler, her birinin görevi ve karar gerekçesi gösterilir. "Her satırı ayrı bir iş olarak değerlendir" seçiliyse her satır ayrı bir madde olur; baştaki `1.`, `-` gibi işaretler atılır. Sonuçlar gridde listelenir ve Excel olarak indirilebilir.
 - **Excel ile toplu** sekmesinde kontrol listesi yüklenir ve bütün maddeler işlenir.
 

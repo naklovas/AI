@@ -116,6 +116,14 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
       </label>
       <div class="katalog-durum" id="katalogDurum">Katalog bilgisi okunuyor…</div>
     </div>
+    <div class="katalog-satir" style="margin-top:12px">
+      <label class="drop" id="dropProsedur">
+        <b>Prosedür listesi (.xlsx) · isteğe bağlı</b>
+        <span id="adProsedur">Doküman Adı (D) ve Süreç Sahibi Birim (H) okunur. Tıkla veya sürükle bırak.</span>
+        <input type="file" accept=".xlsx" id="fProsedur">
+      </label>
+      <div class="katalog-durum" id="prosedurDurum"></div>
+    </div>
     <div id="katalogHata" class="hata" style="margin-top:8px"></div>
   </section>
 
@@ -185,6 +193,7 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
         <th data-k="aksiyon" style="width:24%">Aksiyon / Kontrol</th>
         <th data-k="ekipMetni" style="width:26%">YZ Önerilen Ekipler ve Görevleri</th>
         <th data-k="gerekce" style="width:22%">YZ Karar Gerekçesi</th>
+        <th data-k="prosedurMetni" class="kolProsedur" style="width:16%">İlgili Prosedürler</th>
         <th data-k="guven">Güven</th>
         <th data-k="kullaniciEkip">Senin görüşün (E)</th>
         <th data-k="uyum">Uyum</th>
@@ -224,7 +233,34 @@ function katalogGoster(k) {
   $('#dropKatalog').classList.toggle('dolu', katalogVar);
   butonlariGuncelle();
 }
-fetch('/api/katalog').then(r => r.json()).then(katalogGoster).catch(() => {});
+fetch('/api/katalog').then(r => r.json()).then(k => { katalogGoster(k); prosedurBilgisiAl(); }).catch(() => {});
+
+function prosedurGoster(p) {
+  $('#dropProsedur').classList.toggle('dolu', !!p.var);
+  $('#prosedurDurum').innerHTML = p.var
+    ? `Aktif liste: <b>${esc(p.dosyaAdi)}</b> · ${p.prosedurSayisi} yürürlükteki doküman, ${p.birimSayisi} birim` +
+      (p.eslesmeyenBirim ? ` · <span class="hata" title="Bu birimlerin adı katalogdaki Servis Sahibi Bölüm adlarıyla eşleşmedi; prosedürleri gösterilir ama bu birimlere ekip ataması yapılmaz">${p.eslesmeyenBirim} birim katalogda eşleşmedi</span>` : '') +
+      ` · <button class="sm" id="btnProsedurKaldir">Kaldır</button>`
+    : 'Yüklenmedi. Yüklerseniz model, işle ilgili mevcut prosedürleri de gösterir ve ekip kararında kanıt olarak kullanır.';
+}
+function prosedurBilgisiAl() { fetch('/api/prosedur').then(r => r.json()).then(prosedurGoster).catch(() => {}); }
+$('#prosedurDurum').addEventListener('click', async e => {
+  if (e.target.id !== 'btnProsedurKaldir') return;
+  prosedurGoster(await (await fetch('/api/prosedur', { method: 'DELETE' })).json());
+});
+async function prosedurYukle(f) {
+  if (!f) return;
+  $('#katalogHata').textContent = '';
+  $('#adProsedur').textContent = f.name + ' yükleniyor…';
+  const fd = new FormData(); fd.append('prosedur', f);
+  try {
+    const r = await fetch('/api/prosedur', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.hata || r.statusText);
+    prosedurGoster(j);
+  } catch (e) { $('#katalogHata').textContent = 'Hata: ' + e.message; }
+  $('#adProsedur').textContent = 'Değiştirmek için tıkla ya da sürükle bırak.';
+}
 
 async function katalogYukle(f) {
   if (!f) return;
@@ -236,6 +272,7 @@ async function katalogYukle(f) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.hata || r.statusText);
     katalogGoster(j);
+    prosedurBilgisiAl();
   } catch (e) { $('#katalogHata').textContent = 'Hata: ' + e.message; }
   $('#adKatalog').textContent = 'Değiştirmek için tıkla ya da sürükle bırak.';
 }
@@ -250,6 +287,7 @@ function dropBagla(dropId, inputId, sec) {
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); sec(e.dataTransfer.files[0]); });
 }
 dropBagla('#dropKatalog', '#fKatalog', katalogYukle);
+dropBagla('#dropProsedur', '#fProsedur', prosedurYukle);
 dropBagla('#dropKontrol', '#fKontrol', f => {
   if (!f) return;
   kontrolDosya = f; $('#adKontrol').textContent = f.name; $('#dropKontrol').classList.add('dolu'); butonlariGuncelle();
@@ -334,7 +372,8 @@ $('#btnHatalilar').addEventListener('click', async () => {
 });
 
 function guncelle(j) {
-  for (const s of j.satirlar) s.ekipMetni = s.ekipler.map(e => e.ekip).join(', ');
+  for (const s of j.satirlar) { s.ekipMetni = s.ekipler.map(e => e.ekip).join(', '); s.prosedurMetni = s.prosedurler.map(p => p.kod + ' ' + p.ad).join(', '); }
+  document.querySelectorAll('.kolProsedur').forEach(th => th.classList.toggle('gizli', !j.prosedurVar));
   veri = j;
   const tek = j.tur === 'Metin' && j.toplam === 1;
   $('#durumKart').classList.remove('gizli');
@@ -429,7 +468,7 @@ function filtrele() {
     if (durum && s.durum !== durum) return false;
     if (guvenFiltreli && (s.guven == null || s.guven < gmin || s.guven > gmax)) return false;
     if (ara) {
-      const hepsi = [s.aksiyon, s.altKategori, s.gerekce, s.kullaniciEkip, s.kullaniciNot, ...s.ekipler.flatMap(e => [e.ekip, e.gorev]), ...s.alanlar.map(a => a.deger)].join(' ').toLocaleLowerCase('tr');
+      const hepsi = [s.aksiyon, s.altKategori, s.gerekce, s.kullaniciEkip, s.kullaniciNot, ...s.ekipler.flatMap(e => [e.ekip, e.gorev]), ...s.prosedurler.flatMap(p => [p.kod, p.ad, p.birim]), ...s.alanlar.map(a => a.deger)].join(' ').toLocaleLowerCase('tr');
       if (!hepsi.includes(ara)) return false;
     }
     return true;
@@ -439,6 +478,11 @@ function filtrele() {
 function ekipKartlari(s) {
   return s.ekipler.map(e => `<div class="ekip-kart"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span>
     <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev" style="font-size:13.5px;color:var(--text)">${esc(e.gorev)}</div></div>`).join('');
+}
+function prosedurListesi(s, kisa) {
+  if (!s.prosedurler.length) return s.durum === 'Tamam' && s.gonderilenProsedurler.length ? '<span class="muted">İlgili mevcut prosedür yok</span>' : '<span class="muted">—</span>';
+  return s.prosedurler.map(p => `<div class="ekip"><b>${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.kod)}</a>` : esc(p.kod)}</b> ${esc(p.ad)}
+    <div class="gorev">${esc(p.birim)}${!kisa && p.iliski ? ' · ' + esc(p.iliski) : ''}</div></div>`).join('');
 }
 function tekSonucCiz(s) {
   const sorumlu = s.ekipler.filter(e => e.rol === 'Sorumlu'), destek = s.ekipler.filter(e => e.rol !== 'Sorumlu');
@@ -454,7 +498,8 @@ function tekSonucCiz(s) {
     ${s.hata ? `<div class="hata">${esc(s.hata)}</div>` : ''}
     ${sorumlu.length ? `<h3>Sorumlu</h3>${ekipKartlari({ ekipler: sorumlu })}` : ''}
     ${destek.length ? `<h3>Destek</h3>${ekipKartlari({ ekipler: destek })}` : ''}
-    ${s.gerekce ? `<h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce)}</div>` : ''}`;
+    ${s.gerekce ? `<h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce)}</div>` : ''}
+    ${veri.prosedurVar && s.durum === 'Tamam' ? `<h3>İlgili mevcut prosedürler</h3>${prosedurListesi(s, false)}` : ''}`;
 }
 $('#tekSonuc').addEventListener('click', e => {
   const d = e.target.closest('[data-detay]'); if (d) return detayAc(+d.dataset.detay);
@@ -483,6 +528,7 @@ function ciz() {
       <td><div class="kirp">${esc(s.aksiyon)}</div></td>
       <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
       <td><div class="kirp">${esc(s.gerekce)}</div></td>
+      ${veri.prosedurVar ? `<td><div class="kirp">${prosedurListesi(s, true)}</div></td>` : ''}
       <td>${s.guven != null ? `<div class="guven"><div class="g"><i style="width:${s.guven}%;background:${guvenRenk(s.guven)}"></i></div><b>%${s.guven}</b></div>` : '<span class="muted">—</span>'}</td>
       <td><div class="kirp">${esc(s.kullaniciEkip) || '<span class="muted">—</span>'}</div></td>
       <td>${s.uyum ? `<span class="rozet r-${esc(s.uyum)}">${esc(s.uyum)}</span>` : '<span class="muted">—</span>'}</td>
@@ -515,6 +561,7 @@ function detayAc(sira) {
     <h3>YZ önerisi ${s.guven != null ? '· güven %' + s.guven : ''}</h3>
     ${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span> <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || '—'}
     <h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce) || '—'}</div>
+    ${veri.prosedurVar ? `<h3>İlgili mevcut prosedürler</h3>${prosedurListesi(s, false)}<h3>Modele gönderilen aday prosedürler (${s.gonderilenProsedurler.length})</h3><div class="muted">${s.gonderilenProsedurler.map(esc).join(' · ') || '—'}</div>` : ''}
     ${s.hata ? `<h3>Hata</h3><div class="hata">${esc(s.hata)}</div>` : ''}
     <h3>Modele servis listesiyle gönderilen ekipler (${s.adaylar.length})</h3><div class="muted">${s.adaylar.map(esc).join(' · ') || '—'}</div>
     <h3>Modelin ham yanıtı</h3><pre>${esc(s.hamCevap) || '—'}</pre>`;

@@ -61,6 +61,29 @@ app.MapPost("/api/katalog", async (HttpRequest req, IsYoneticisi yonetici) =>
     }
 });
 
+app.MapGet("/api/prosedur", (IsYoneticisi yonetici) => yonetici.ProsedurBilgisi());
+
+app.MapPost("/api/prosedur", async (HttpRequest req, IsYoneticisi yonetici) =>
+{
+    if (!req.HasFormContentType || req.Form.Files["prosedur"] is not { } dosya)
+        return Results.BadRequest(new { hata = "Prosedür listesi Excel dosyası gerekli." });
+    try
+    {
+        yonetici.ProsedurYukle(await OkuAsync(dosya), dosya.FileName);
+        return Results.Ok(yonetici.ProsedurBilgisi());
+    }
+    catch (ExcelOkumaHatasi ex)
+    {
+        return Results.BadRequest(new { hata = ex.Message });
+    }
+});
+
+app.MapDelete("/api/prosedur", (IsYoneticisi yonetici) =>
+{
+    yonetici.ProsedurKaldir();
+    return Results.Ok(yonetici.ProsedurBilgisi());
+});
+
 // Excel ile toplu analiz. Katalog gönderilmezse son yüklenen katalog kullanılır.
 app.MapPost("/api/is", async (HttpRequest req, IsYoneticisi yonetici) =>
 {
@@ -152,6 +175,8 @@ class YzAyarlari
     public int MaksEkipSayisi { get; set; } = 3;
     public bool ServisAciklamasiGonder { get; set; } = true;
     public int ServisAciklamaMaksKarakter { get; set; } = 250;
+    /// Prosedür listesi yüklüyse her maddeyle en ilgili kaç prosedür modele gönderilsin (0 = gönderme)
+    public int IlgiliProsedurSayisi { get; set; } = 15;
 }
 
 class ExcelAyarlari
@@ -161,6 +186,10 @@ class ExcelAyarlari
     public string CiktiEkipBasligi { get; set; } = "YZ Önerilen Ekipler ve Görevleri";
     public string CiktiGerekceBasligi { get; set; } = "YZ Karar Gerekçesi";
     public string KatalogAciklamaKolonu { get; set; } = "F";
+    public string CiktiProsedurBasligi { get; set; } = "YZ İlgili Mevcut Prosedürler";
+    /// Prosedür listesinde başlıklar bulunamazsa kullanılacak kolon harfleri
+    public string ProsedurAdKolonu { get; set; } = "D";
+    public string ProsedurBirimKolonu { get; set; } = "H";
 }
 
 // =====================================================================
@@ -172,6 +201,21 @@ record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kateg
 record Mesaj(string role, string content);
 
 record EkipOnerisi(string Ekip, string Rol, string Gorev, bool KatalogdaVar);
+
+record ProsedurOnerisi(string Kod, string Ad, string Birim, string Link, string Iliski);
+
+class Prosedur
+{
+    public string Tip { get; init; } = "";
+    public string Kod { get; init; } = "";
+    public string DokumanKodu { get; init; } = "";
+    public string Ad { get; init; } = "";
+    public string Birim { get; init; } = "";
+    public string SurecModeli { get; init; } = "";
+    public string Link { get; init; } = "";
+    /// Prompt'ta ve yanıtta kullanılan kimlik: Doküman Kodu, yoksa Kod
+    public string Kimlik => DokumanKodu.Length > 0 ? DokumanKodu : Kod;
+}
 
 class Ekip
 {
@@ -206,10 +250,16 @@ class KontrolSatiri
     public string Hata = "";
     public string HamCevap = "";
     public List<string> Adaylar = [];
+    public List<ProsedurOnerisi> Prosedurler = [];
+    public List<string> GonderilenProsedurler = [];
     public int PromptKarakter;
 
     public string EkipMetni() => string.Join("\n", Ekipler.Select(e =>
         $"• {e.Ekip} ({e.Rol}){(e.KatalogdaVar ? "" : " [katalogda bulunamadı]")}: {e.Gorev}"));
+
+    public string ProsedurMetni() => Durum != "Tamam" ? "" : Prosedurler.Count == 0
+        ? (GonderilenProsedurler.Count > 0 ? "İlgili mevcut prosedür bulunamadı." : "")
+        : string.Join("\n", Prosedurler.Select(p => $"• {p.Kod} {p.Ad} ({p.Birim}){(p.Iliski.Length > 0 ? ": " + p.Iliski : "")}"));
 
     public string GerekceMetni() => Durum == "Tamam"
         ? $"Güven: %{Guven ?? 0}\n{Gerekce}"
@@ -225,6 +275,7 @@ class AnalizIsi
     public byte[]? KontrolBytes { get; init; }
     public required KontrolDosyasi Kontrol { get; init; }
     public required Katalog Katalog { get; init; }
+    public ProsedurKutuphanesi? Prosedurler { get; init; }
     public CancellationTokenSource Iptal { get; } = new();
     public volatile string GenelDurum = "Çalışıyor";
 
@@ -232,6 +283,7 @@ class AnalizIsi
     {
         id = Id,
         tur = KontrolBytes is null ? "Metin" : "Excel",
+        prosedurVar = Prosedurler is not null,
         dosyaAdi = DosyaAdi,
         baslangic = Baslangic,
         durum = GenelDurum,
@@ -259,6 +311,8 @@ class AnalizIsi
             hata = s.Hata,
             hamCevap = s.HamCevap,
             adaylar = s.Adaylar,
+            prosedurler = s.Prosedurler.Select(p => new { kod = p.Kod, ad = p.Ad, birim = p.Birim, link = p.Link, iliski = p.Iliski }),
+            gonderilenProsedurler = s.GonderilenProsedurler,
             promptKarakter = s.PromptKarakter
         })
     };
@@ -446,6 +500,58 @@ class Katalog
 }
 
 // =====================================================================
+// PROSEDÜR KÜTÜPHANESİ (mevcut süreç dokümanları; maddeyle en ilgilileri seçilir)
+// =====================================================================
+
+class ProsedurKutuphanesi
+{
+    public List<Prosedur> Liste { get; }
+    readonly Katalog katalog;
+    readonly Dictionary<Prosedur, Ekip?> birimEkip = [];
+    readonly Dictionary<Prosedur, Dictionary<string, double>> kokler = [];
+    readonly Dictionary<string, double> idf = [];
+
+    public ProsedurKutuphanesi(List<Prosedur> liste, Katalog katalog)
+    {
+        (Liste, this.katalog) = (liste, katalog);
+        var df = new Dictionary<string, int>();
+        foreach (var p in liste)
+        {
+            birimEkip[p] = katalog.EkipBul(p.Birim);
+            var k = new Dictionary<string, double>();
+            foreach (var kok in Metin.Kokler(p.Ad)) k[kok] = k.GetValueOrDefault(kok) + 1;
+            foreach (var kok in Metin.Kokler(p.SurecModeli)) k[kok] = k.GetValueOrDefault(kok) + 0.5;
+            kokler[p] = k;
+            foreach (var kok in k.Keys) df[kok] = df.GetValueOrDefault(kok) + 1;
+        }
+        foreach (var (kok, n) in df) idf[kok] = Math.Log(1 + (double)liste.Count / n);
+    }
+
+    public int EslesmeyenBirimSayisi => Liste.Select(p => p.Birim).Distinct().Count(b => katalog.EkipBul(b) is null);
+    public Ekip? Ekibi(Prosedur p) => birimEkip.GetValueOrDefault(p);
+
+    public List<Prosedur> IlgilileriSec(Dictionary<string, double> q, int adet)
+    {
+        if (adet <= 0) return [];
+        return Liste
+            .Select(p => (p, skor: kokler[p].Sum(kv => q.TryGetValue(kv.Key, out var w) ? w * idf[kv.Key] * (1 + Math.Log(kv.Value + 0.5)) : 0)
+                                  / Math.Sqrt(1 + kokler[p].Count)))
+            .Where(x => x.skor > 0)
+            .OrderByDescending(x => x.skor)
+            .Take(adet)
+            .Select(x => x.p)
+            .ToList();
+    }
+
+    public Prosedur? Bul(string? kimlik)
+    {
+        var n = Metin.Normalize(kimlik);
+        if (n.Length == 0) return null;
+        return Liste.FirstOrDefault(p => Metin.Normalize(p.DokumanKodu) == n || Metin.Normalize(p.Kod) == n);
+    }
+}
+
+// =====================================================================
 // EXCEL OKUMA / YAZMA
 // =====================================================================
 
@@ -455,6 +561,7 @@ class KontrolDosyasi
     public int BaslikSatiri { get; init; }
     public int CiktiEkipKolonu { get; init; }
     public int CiktiGerekceKolonu { get; init; }
+    public int CiktiProsedurKolonu { get; init; }
     public required List<KontrolSatiri> Satirlar { get; init; }
 }
 
@@ -523,6 +630,49 @@ static class ExcelIslemleri
         return katalog;
     }
 
+    public static List<Prosedur> ProsedurOku(byte[] bytes, ExcelAyarlari ayar)
+    {
+        using var wb = Ac(bytes, "Prosedür listesi");
+        // Başlıklar bulunamazsa ilk sayfanın 1. satırı başlık kabul edilir; ad ve birim D / H kolonlarından okunur
+        var (ws, baslik) = BaslikBul(wb, b => b.Any(x => x.Contains("dokuman adi")) && b.Any(x => x.Contains("surec sahibi") || x.Contains("birim")))
+            ?? (wb.Worksheet(1), 1);
+        var basliklar = ws.Row(baslik).CellsUsed().Select(c => (no: c.Address.ColumnNumber, ad: Metin.Normalize(c.GetFormattedString()))).ToList();
+        int Kolon(Func<string, bool> kosul) => basliklar.FirstOrDefault(b => kosul(b.ad)).no;
+
+        int tip = Kolon(a => a.Contains("mevzuat tipi") || a == "tip"), kod = Kolon(a => a == "kod"), dkod = Kolon(a => a.Contains("dokuman kodu")),
+            ad = Kolon(a => a.Contains("dokuman adi")), birim = Kolon(a => a.Contains("surec sahibi") || a.Contains("birim")),
+            model = Kolon(a => a.Contains("surec modeli")), durum = Kolon(a => a == "durum"), link = Kolon(a => a.Contains("link"));
+        if (ad == 0) ad = KolonNo(ayar.ProsedurAdKolonu);
+        if (birim == 0) birim = KolonNo(ayar.ProsedurBirimKolonu);
+
+        string Al(IXLRow r, int k) => k == 0 ? "" : Deger(r.Cell(k));
+        string LinkAl(IXLRow r)
+        {
+            if (link == 0) return "";
+            var c = r.Cell(link);
+            try { if (c.HasHyperlink && c.GetHyperlink().ExternalAddress is { } u) return u.ToString(); } catch { }
+            var metin = Deger(c);
+            return metin.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? metin : "";
+        }
+
+        var liste = new List<Prosedur>();
+        var sonSatir = ws.LastRowUsed()?.RowNumber() ?? baslik;
+        for (int i = baslik + 1; i <= sonSatir; i++)
+        {
+            var r = ws.Row(i);
+            if (Al(r, ad).Length == 0) continue;
+            // Pasif dokümanlar alınmaz
+            if (durum != 0 && Metin.Normalize(Al(r, durum)) is "false" or "0" or "pasif" or "hayir" or "yururlukten kalkti") continue;
+            liste.Add(new Prosedur
+            {
+                Tip = Al(r, tip), Kod = Al(r, kod), DokumanKodu = Al(r, dkod), Ad = Al(r, ad),
+                Birim = Al(r, birim), SurecModeli = Al(r, model), Link = LinkAl(r)
+            });
+        }
+        if (liste.Count == 0) throw new ExcelOkumaHatasi("Prosedür listesinde geçerli (Durum = True) satır bulunamadı.");
+        return liste;
+    }
+
     public static KontrolDosyasi KontrolOku(byte[] bytes, ExcelAyarlari ayar)
     {
         using var wb = Ac(bytes, "Kontrol listesi");
@@ -533,6 +683,7 @@ static class ExcelIslemleri
         int ekipKolon = KolonNo(ayar.KullaniciEkipKolonu), notKolon = KolonNo(ayar.KullaniciNotKolonu);
         var cikti1Norm = Metin.Normalize(ayar.CiktiEkipBasligi);
         var cikti2Norm = Metin.Normalize(ayar.CiktiGerekceBasligi);
+        var cikti3Norm = Metin.Normalize(ayar.CiktiProsedurBasligi);
 
         var basliklar = ws.Row(baslik).CellsUsed().ToDictionary(c => c.Address.ColumnNumber, c => Deger(c));
         int sonKolon = Math.Max(basliklar.Keys.DefaultIfEmpty(1).Max(), notKolon);
@@ -542,8 +693,10 @@ static class ExcelIslemleri
         int cikti2 = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value) == cikti2Norm).Key;
         if (cikti1 == 0) cikti1 = sonKolon + 1;
         if (cikti2 == 0) cikti2 = Math.Max(sonKolon, cikti1) + 1;
+        int cikti3 = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value) == cikti3Norm).Key;
+        if (cikti3 == 0) cikti3 = Math.Max(sonKolon, Math.Max(cikti1, cikti2)) + 1;
 
-        var haric = new HashSet<int> { ekipKolon, notKolon, cikti1, cikti2 };
+        var haric = new HashSet<int> { ekipKolon, notKolon, cikti1, cikti2, cikti3 };
         var aksiyonKolon = basliklar.Where(b => !haric.Contains(b.Key))
             .OrderByDescending(b => Metin.Normalize(b.Value).Contains("aksiyon") ? 2 : Metin.Normalize(b.Value).Contains("kontrol") ? 1 : 0)
             .First().Key;
@@ -578,6 +731,7 @@ static class ExcelIslemleri
             BaslikSatiri = baslik,
             CiktiEkipKolonu = cikti1,
             CiktiGerekceKolonu = cikti2,
+            CiktiProsedurKolonu = cikti3,
             Satirlar = satirlar
         };
     }
@@ -587,8 +741,9 @@ static class ExcelIslemleri
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Sonuç");
-        var basliklar = new[] { "No", "İş", ayar.CiktiEkipBasligi, ayar.CiktiGerekceBasligi };
-        for (int i = 0; i < basliklar.Length; i++)
+        var basliklar = new List<string> { "No", "İş", ayar.CiktiEkipBasligi, ayar.CiktiGerekceBasligi };
+        if (analiz.Prosedurler is not null) basliklar.Add(ayar.CiktiProsedurBasligi);
+        for (int i = 0; i < basliklar.Count; i++)
         {
             var h = ws.Cell(1, i + 1);
             h.Value = basliklar[i];
@@ -602,11 +757,12 @@ static class ExcelIslemleri
             ws.Cell(r, 2).Value = s.Aksiyon;
             ws.Cell(r, 3).Value = s.EkipMetni();
             ws.Cell(r, 4).Value = s.GerekceMetni();
+            if (analiz.Prosedurler is not null) ws.Cell(r, 5).Value = s.ProsedurMetni();
             r++;
         }
-        ws.Column(1).Width = 6; ws.Column(2).Width = 60; ws.Column(3).Width = 70; ws.Column(4).Width = 80;
-        ws.Range(2, 1, Math.Max(2, r - 1), 4).Style.Alignment.WrapText = true;
-        ws.Range(2, 1, Math.Max(2, r - 1), 4).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        ws.Column(1).Width = 6; ws.Column(2).Width = 60; ws.Column(3).Width = 70; ws.Column(4).Width = 80; ws.Column(5).Width = 70;
+        ws.Range(2, 1, Math.Max(2, r - 1), basliklar.Count).Style.Alignment.WrapText = true;
+        ws.Range(2, 1, Math.Max(2, r - 1), basliklar.Count).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         using var cikti = new MemoryStream();
         wb.SaveAs(cikti);
         return cikti.ToArray();
@@ -620,7 +776,9 @@ static class ExcelIslemleri
         var k = analiz.Kontrol;
         var ws = wb.Worksheet(k.SayfaAdi);
 
-        foreach (var (kolon, baslikMetni, genislik) in new[] { (k.CiktiEkipKolonu, ayar.CiktiEkipBasligi, 70.0), (k.CiktiGerekceKolonu, ayar.CiktiGerekceBasligi, 80.0) })
+        var kolonlar = new List<(int kolon, string baslik, double genislik)> { (k.CiktiEkipKolonu, ayar.CiktiEkipBasligi, 70.0), (k.CiktiGerekceKolonu, ayar.CiktiGerekceBasligi, 80.0) };
+        if (analiz.Prosedurler is not null) kolonlar.Add((k.CiktiProsedurKolonu, ayar.CiktiProsedurBasligi, 70.0));
+        foreach (var (kolon, baslikMetni, genislik) in kolonlar)
         {
             var hucre = ws.Cell(k.BaslikSatiri, kolon);
             if (kolon > 1) hucre.Style = ws.Cell(k.BaslikSatiri, kolon - 1).Style;
@@ -633,7 +791,9 @@ static class ExcelIslemleri
 
         foreach (var s in k.Satirlar)
         {
-            foreach (var (kolon, deger) in new[] { (k.CiktiEkipKolonu, s.EkipMetni()), (k.CiktiGerekceKolonu, s.GerekceMetni()) })
+            var degerler = new List<(int, string)> { (k.CiktiEkipKolonu, s.EkipMetni()), (k.CiktiGerekceKolonu, s.GerekceMetni()) };
+            if (analiz.Prosedurler is not null) degerler.Add((k.CiktiProsedurKolonu, s.ProsedurMetni()));
+            foreach (var (kolon, deger) in degerler)
             {
                 var hucre = ws.Cell(s.SatirNo, kolon);
                 hucre.Value = deger;
@@ -659,7 +819,8 @@ static class PromptOlusturucu
         "iyi bilen kıdemli bir süreç ve yönetişim analistisin. Görevin, yapay zeka geliştirme sürecine ait aksiyon/kontrol maddelerini " +
         "veya kullanıcının anlattığı işleri kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen satır formatında, Türkçe yanıt verirsin.";
 
-    public static string Olustur(KontrolSatiri s, Katalog katalog, List<Ekip> adaylar, YzAyarlari ayar)
+    public static string Olustur(KontrolSatiri s, Katalog katalog, List<Ekip> adaylar, YzAyarlari ayar,
+        List<Prosedur>? ilgiliProsedurler = null, ProsedurKutuphanesi? kutuphane = null)
     {
         var sb = new StringBuilder();
         var q = katalog.Sorgu(s);
@@ -706,6 +867,19 @@ static class PromptOlusturucu
         foreach (var a in s.Alanlar) sb.AppendLine($"- {a.Key}: {a.Value}");
         sb.AppendLine();
 
+        bool prosedurVar = ilgiliProsedurler is { Count: > 0 } && kutuphane is not null;
+        if (prosedurVar)
+        {
+            sb.AppendLine("KURUMDA YÜRÜRLÜKTE OLAN, BU İŞLE İLGİLİ OLABİLECEK PROSEDÜRLER (anahtar kelime benzerliğiyle seçildi; hepsi ilgili olmayabilir):");
+            foreach (var p in ilgiliProsedurler!)
+            {
+                var ekip = kutuphane!.Ekibi(p);
+                var sahip = ekip is not null ? ekip.Etiket : "(süreç sahibi birim katalogda yok, atanamaz)";
+                sb.AppendLine($"- {p.Kimlik} | {p.Ad}{(p.SurecModeli.Length > 0 && p.SurecModeli != p.Ad ? $" (Süreç: {p.SurecModeli})" : "")} | Süreç sahibi: {sahip}");
+            }
+            sb.AppendLine();
+        }
+
         if (s.KullaniciEkip.Length > 0 || s.KullaniciNot.Length > 0)
         {
             sb.AppendLine("KULLANICININ ÖN GÖRÜŞÜ (yarım kalmış bir ön çalışmadır; doğruluğu garanti değildir, YALNIZCA İPUCU olarak kullan):");
@@ -723,12 +897,15 @@ static class PromptOlusturucu
 4. Her ekip için bu maddede somut olarak NE YAPACAĞINI 1-2 cümleyle yaz (örn: ""Atama yazısını hazırlar ve süreç sahibini belirler"").
 5. Kullanıcının ön görüşüne körü körüne uyma. Servis kataloğuyla uyumluysa destekleyici kanıt olarak kullan; uyumsuzsa gerekçede nedenini kısaca belirt.
 6. Gerekçede kararı hangi servis(ler)e veya ekibin hangi görev alanına dayanarak verdiğini açıkça yaz (2-4 cümle).
-7. GUVEN 0-100 arası bir sayıdır. Katalogda bu işi açıkça kapsayan bir servis yoksa 60'ın altında ver.
+7. GUVEN 0-100 arası bir sayıdır. Katalogda bu işi açıkça kapsayan bir servis yoksa 60'ın altında ver.{(prosedurVar ? @"
+7a. PROSEDÜRLER: Yukarıdaki prosedür listesinden bu işi bugün zaten kapsayan veya doğrudan ilişkili olanları PROSEDUR satırlarıyla belirt (en fazla 5). Yalnızca listedeki doküman kodlarını kullan, kod UYDURMA. Hiçbiri gerçekten ilgili değilse tek satır ""PROSEDUR: YOK"" yaz.
+    Bir işi zaten yürüten prosedürün süreç sahibi birimi, o işin sorumlu ekibi olması için güçlü bir kanıttır; ama ekip yine de yalnızca [E...] listesinden seçilir." : "")}
 8. ÇIKTI FORMATI: Yanıtına KESİNLİKLE aşağıdaki satırlarla başla. JSON, tablo, markdown veya başka açıklama KULLANMA. Her ekip için ayrı bir EKIP satırı yaz; alanları | ile ayır.
 EKIP: [E...] <listedeki ekip adı> | Sorumlu | <bu ekibin bu maddede ne yapacağı>
 EKIP: [E...] <listedeki ekip adı> | Destek | <bu ekibin bu maddede ne yapacağı>
 GUVEN: %<0-100>
-GEREKCE: <kararı nasıl verdiğin, 2-4 cümle>");
+GEREKCE: <kararı nasıl verdiğin, 2-4 cümle>{(prosedurVar ? @"
+PROSEDUR: <listedeki doküman kodu> | <bu işle ilişkisi, 1 cümle>" : "")}");
 
         return sb.ToString();
     }
@@ -754,6 +931,27 @@ static class CevapAyristirici
     }
 
     /// Düşünme bloklarını ve markdown süslemelerini temizler.
+    static readonly Regex ProsedurSatiri = new(@"^\s*(?:[-*•#>]+\s*)?PROSED[ÜU]R\s*[:：=]\s*(?<deger>.*)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// PROSEDUR: kod | ilişki satırlarını okur; yalnızca kütüphanede olan kodları döner.
+    public static List<ProsedurOnerisi> Prosedurler(string ham, ProsedurKutuphanesi? kutuphane)
+    {
+        var sonuc = new List<ProsedurOnerisi>();
+        if (kutuphane is null) return sonuc;
+        foreach (var satir in Temizle(ham).Split('\n'))
+        {
+            var m = ProsedurSatiri.Match(satir.TrimEnd('\r'));
+            if (!m.Success) continue;
+            var parcalar = m.Groups["deger"].Value.Split('|', 2).Select(x => x.Trim().Trim('[', ']', '"', '\'')).ToArray();
+            // "PRS.KDY.10 RHEL ..." gibi kod + ad birlikte yazılmış olabilir: ilk kelimeyi de dene
+            var p = kutuphane.Bul(parcalar[0]) ?? kutuphane.Bul(parcalar[0].Split(' ', 2)[0]);
+            if (p is null || sonuc.Any(x => x.Kod == p.Kimlik)) continue;
+            var ekip = kutuphane.Ekibi(p);
+            sonuc.Add(new ProsedurOnerisi(p.Kimlik, p.Ad, ekip?.Ad ?? p.Birim, p.Link, parcalar.Length > 1 ? parcalar[1] : ""));
+        }
+        return sonuc;
+    }
+
     public static string Temizle(string? ham)
     {
         var metin = ham ?? "";
@@ -786,6 +984,7 @@ static class CevapAyristirici
 
         foreach (var satir in metin.Split('\n'))
         {
+            if (ProsedurSatiri.IsMatch(satir)) { sonAnahtar = "PROSEDUR"; continue; }
             var m = AnahtarSatiri.Match(satir.TrimEnd('\r'));
             if (!m.Success)
             {
@@ -879,12 +1078,30 @@ class IsYoneticisi
     string katalogAdi = "";
     DateTime katalogZamani;
 
+    readonly string prosedurYolu, prosedurAdYolu;
+    List<Prosedur>? prosedurler;
+    string prosedurAdi = "";
+    DateTime prosedurZamani;
+    ProsedurKutuphanesi? kutuphane;   // katalog veya prosedür listesi değişince yeniden kurulur
+
     public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env)
     {
         (this.ayar, this.excelAyar, this.httpFactory, this.log) = (ayar, excelAyar, httpFactory, log);
         var klasor = Path.Combine(env.ContentRootPath, "veri");
         katalogYolu = Path.Combine(klasor, "son_katalog.xlsx");
         katalogAdYolu = Path.Combine(klasor, "son_katalog_adi.txt");
+        prosedurYolu = Path.Combine(klasor, "son_prosedur.xlsx");
+        prosedurAdYolu = Path.Combine(klasor, "son_prosedur_adi.txt");
+        if (File.Exists(prosedurYolu))
+        {
+            try
+            {
+                prosedurler = ExcelIslemleri.ProsedurOku(File.ReadAllBytes(prosedurYolu), excelAyar);
+                prosedurAdi = File.Exists(prosedurAdYolu) ? File.ReadAllText(prosedurAdYolu).Trim() : "son_prosedur.xlsx";
+                prosedurZamani = File.GetLastWriteTime(prosedurYolu);
+            }
+            catch (Exception ex) { log.LogWarning("Kayıtlı prosedür listesi okunamadı: {Hata}", ex.Message); }
+        }
         if (File.Exists(katalogYolu))
         {
             try
@@ -912,7 +1129,7 @@ class IsYoneticisi
     public void KatalogYukle(byte[] bytes, string dosyaAdi)
     {
         var yeni = ExcelIslemleri.KatalogOku(bytes, excelAyar);
-        (katalog, katalogAdi, katalogZamani) = (yeni, dosyaAdi, DateTime.Now);
+        (katalog, katalogAdi, katalogZamani, kutuphane) = (yeni, dosyaAdi, DateTime.Now, null);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(katalogYolu)!);
@@ -922,6 +1139,46 @@ class IsYoneticisi
         catch (Exception ex) { log.LogWarning("Katalog diske yazılamadı: {Hata}", ex.Message); }
     }
 
+    public object ProsedurBilgisi()
+    {
+        if (prosedurler is null) return new { var = false };
+        var k = AktifKutuphane();
+        return new
+        {
+            var = true,
+            dosyaAdi = prosedurAdi,
+            yuklenme = prosedurZamani,
+            prosedurSayisi = prosedurler.Count,
+            birimSayisi = prosedurler.Select(p => p.Birim).Distinct().Count(),
+            eslesmeyenBirim = k?.EslesmeyenBirimSayisi
+        };
+    }
+
+    public void ProsedurYukle(byte[] bytes, string dosyaAdi)
+    {
+        var yeni = ExcelIslemleri.ProsedurOku(bytes, excelAyar);
+        (prosedurler, prosedurAdi, prosedurZamani, kutuphane) = (yeni, dosyaAdi, DateTime.Now, null);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(prosedurYolu)!);
+            File.WriteAllBytes(prosedurYolu, bytes);
+            File.WriteAllText(prosedurAdYolu, dosyaAdi);
+        }
+        catch (Exception ex) { log.LogWarning("Prosedür listesi diske yazılamadı: {Hata}", ex.Message); }
+    }
+
+    public void ProsedurKaldir()
+    {
+        (prosedurler, kutuphane) = (null, null);
+        try { File.Delete(prosedurYolu); File.Delete(prosedurAdYolu); } catch { }
+    }
+
+    ProsedurKutuphanesi? AktifKutuphane()
+    {
+        if (prosedurler is null || katalog is null) return null;
+        return kutuphane ??= new ProsedurKutuphanesi(prosedurler, katalog);
+    }
+
     Katalog AktifKatalog() => katalog ?? throw new ExcelOkumaHatasi("Önce servis kataloğu Excel dosyasını yükleyin.");
 
     public AnalizIsi ExcelIleBaslat(byte[] kontrolBytes, string dosyaAdi) => Baslat(new AnalizIsi
@@ -929,7 +1186,8 @@ class IsYoneticisi
         DosyaAdi = dosyaAdi,
         KontrolBytes = kontrolBytes,
         Kontrol = ExcelIslemleri.KontrolOku(kontrolBytes, excelAyar),
-        Katalog = AktifKatalog()
+        Katalog = AktifKatalog(),
+        Prosedurler = ayar.IlgiliProsedurSayisi > 0 ? AktifKutuphane() : null
     });
 
     public AnalizIsi MetinleBaslat(string metin, bool herSatirAyriMadde)
@@ -945,7 +1203,8 @@ class IsYoneticisi
         {
             DosyaAdi = maddeler.Count == 1 ? "Metinle soru" : $"Metinle soru ({maddeler.Count} madde)",
             Kontrol = new KontrolDosyasi { SayfaAdi = "Sonuç", Satirlar = satirlar },
-            Katalog = AktifKatalog()
+            Katalog = AktifKatalog(),
+            Prosedurler = ayar.IlgiliProsedurSayisi > 0 ? AktifKutuphane() : null
         });
     }
 
@@ -1000,7 +1259,9 @@ class IsYoneticisi
         var adaylar = ayar.OnElemeYap ? katalog.AdaylariSec(s, ayar.AdayEkipSayisi) : katalog.Ekipler;
         s.Adaylar = adaylar.Select(a => a.Ad).ToList();
 
-        var kullaniciMesaji = PromptOlusturucu.Olustur(s, katalog, adaylar, ayar);
+        var ilgili = analiz.Prosedurler?.IlgilileriSec(katalog.Sorgu(s), ayar.IlgiliProsedurSayisi) ?? [];
+        s.GonderilenProsedurler = ilgili.Select(p => $"{p.Kimlik} {p.Ad}").ToList();
+        var kullaniciMesaji = PromptOlusturucu.Olustur(s, katalog, adaylar, ayar, ilgili, analiz.Prosedurler);
         // Qwen3'ün "yumuşak" düşünme kapatma komutu; chat_template_kwargs'ı tanımayan sunucularda da işe yarar
         if (ayar.DusunmeyiKapat) kullaniciMesaji += "\n/no_think";
         s.PromptKarakter = kullaniciMesaji.Length + PromptOlusturucu.Sistem.Length;
@@ -1041,6 +1302,7 @@ class IsYoneticisi
                     if (uydurma.Count > 0)
                         karar.gerekce += $" (Not: katalogda bulunmayan {string.Join(", ", uydurma.Select(u => $"'{u}'"))} önerisi çıkarıldı.)";
 
+                    s.Prosedurler = CevapAyristirici.Prosedurler(ham, analiz.Prosedurler);
                     s.Ekipler = gecerli;
                     s.Gerekce = karar.gerekce.Trim();
                     s.Guven = karar.guven;
