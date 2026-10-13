@@ -8,6 +8,9 @@ using ClosedXML.Excel;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// appsettings.json git'te tutulmaz (appsettings.ornek.json'dan kopyalanır); dosya yoksa da varsayılanlarla açılır
+if (string.IsNullOrWhiteSpace(builder.Configuration["Urls"])) builder.WebHost.UseUrls("http://0.0.0.0:5080");
+
 var yzAyar = builder.Configuration.GetSection("YzAyarlari").Get<YzAyarlari>() ?? new YzAyarlari();
 // QwenApiUrl / QwenApiKey YzAyarlari bölümünde yoksa kök seviyeden okunur
 if (string.IsNullOrWhiteSpace(yzAyar.QwenApiUrl)) yzAyar.QwenApiUrl = builder.Configuration["QwenApiUrl"] ?? "";

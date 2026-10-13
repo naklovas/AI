@@ -6,12 +6,19 @@ Proje iki dosyadan oluşur: `Program.cs` (.NET 8 minimal API) ve `wwwroot/index.
 
 ## Çalıştırma
 
-```bash
+İlk kurulumda örnek ayar dosyasını kopyalayıp kendi değerlerinizi yazın:
+
+```cmd
+copy appsettings.ornek.json appsettings.json
+notepad appsettings.json
 dotnet run
-# http://localhost:5080
 ```
 
-`appsettings.json` → `YzAyarlari` bölümünde `QwenApiUrl` (OpenAI uyumlu `chat/completions` adresinin tamamı) ve `QwenApiKey` alanlarını doldurun. Bu iki ayar kök seviyede de yazılabilir; model Qwen olmasa da ayar adları değişmez.
+Uygulama `http://localhost:5080` adresinde açılır.
+
+`appsettings.json` git'te tutulmaz (`.gitignore`), `git pull` bu dosyaya hiç dokunmaz. Yeni bir ayar eklendiğinde `appsettings.ornek.json` dosyası güncellenir; yeni ayarı oradan kendi dosyanıza elle eklersiniz. Eklemezseniz koddaki varsayılan değer kullanılır.
+
+`QwenApiUrl` (OpenAI uyumlu `chat/completions` adresinin tamamı) ve `QwenApiKey` değerleri `YzAyarlari` bölümüne ya da kök seviyeye yazılabilir. Model Qwen olmasa da ayar adları değişmez.
 
 | Ayar | Açıklama |
 |---|---|
