@@ -45,6 +45,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 - Sürecin bütün maddeleri zaten YZ ile ilgili olduğu için "yapay / zeka / YZ" kelimeleri anahtar kelime puanlamasında yok sayılır.
 - Prompt, ekibin işin türüne göre seçilmesini ister. `GenelAdliEkipler` listesindeki ekipler (varsayılan: YAPAY ZEKA UYGULAMALARI) yalnızca iş doğrudan model geliştirme veya işletme ise sorumlu yapılır.
 - `ExcelAyarlari:KatalogaEklenecekEkipler` listesindeki ekipler (varsayılan: PROJE YÖNETİMİ OFİSİ) görev tanımlarıyla birlikte katalogdaymış gibi modele gönderilir. Adı katalogdaki bir ekiple eşleşirse görev tanımı o ekibe eklenir.
+- `EkKurallar` listesindeki kurum kuralları prompt'a öncelikli kural olarak eklenir. `{EKİP ADI}` yazılan yerler ekibin `[E...]` koduyla değiştirilir. Varsayılan kural: Pergel üzerinden talep yönetimi, kapsam, paydaş yönetimi ve iletişim konuları PROJE YÖNETİMİ OFİSİ'ndedir.
 
 ## Hücre içinde birden fazla madde
 
