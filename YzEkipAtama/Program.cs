@@ -100,8 +100,9 @@ class YzAyarlari
     public string QwenApiKey { get; set; } = "";
     public string AiModel { get; set; } = "zt-ga-small-0";
     public double Temperature { get; set; } = 0.1;
-    public int MaksToken { get; set; } = 1500;
+    public int MaksToken { get; set; } = 3000;
     public bool JsonModu { get; set; }
+    public bool DusunmeyiKapat { get; set; }
     public int ZamanAsimiDakika { get; set; } = 3;
     public bool SertifikaDogrulamasiniAtla { get; set; } = true;
     public int Paralellik { get; set; } = 3;
@@ -599,9 +600,12 @@ static class PromptOlusturucu
 4. Her ekip için bu maddede somut olarak NE YAPACAĞINI 1-2 cümleyle yaz (örn: ""Atama yazısını hazırlar ve süreç sahibini belirler"").
 5. Kullanıcının ön görüşüne körü körüne uyma. Servis kataloğuyla uyumluysa destekleyici kanıt olarak kullan; uyumsuzsa gerekçede nedenini kısaca belirt.
 6. Gerekçede kararı hangi servis(ler)e veya ekibin hangi görev alanına dayanarak verdiğini açıkça yaz (2-4 cümle).
-7. ""guven"" 0-100 arası tam sayıdır. Katalogda bu işi açıkça kapsayan bir servis yoksa 60'ın altında ver.
-8. ÇIKTI: Yalnızca aşağıdaki biçimde geçerli bir JSON döndür. Başına/sonuna açıklama, markdown veya kod bloğu EKLEME.
-{{""ekipler"":[{{""ekip"":""<listeden ekip adı>"",""rol"":""Sorumlu"",""gorev"":""<ne yapacak>""}}],""gerekce"":""<kararı nasıl verdin>"",""guven"":75}}");
+7. GUVEN 0-100 arası bir sayıdır. Katalogda bu işi açıkça kapsayan bir servis yoksa 60'ın altında ver.
+8. ÇIKTI FORMATI: Yanıtına KESİNLİKLE aşağıdaki satırlarla başla. JSON, tablo, markdown veya başka açıklama KULLANMA. Her ekip için ayrı bir EKIP satırı yaz; alanları | ile ayır.
+EKIP: <listeden ekip adı> | Sorumlu | <bu ekibin bu maddede ne yapacağı>
+EKIP: <listeden ekip adı> | Destek | <bu ekibin bu maddede ne yapacağı>
+GUVEN: %<0-100>
+GEREKCE: <kararı nasıl verdiğin, 2-4 cümle>");
 
         return sb.ToString();
     }
@@ -626,10 +630,86 @@ static class CevapAyristirici
         return null;
     }
 
+    /// Düşünme bloklarını ve markdown süslemelerini temizler.
+    public static string Temizle(string? ham)
+    {
+        var metin = ham ?? "";
+        metin = Regex.Replace(metin, @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        // Açılışı sunucu tarafından yutulmuş ya da hiç kapanmamış düşünme bloğu
+        var kapanis = metin.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+        if (kapanis >= 0) metin = metin[(kapanis + 8)..];
+        var acilis = metin.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+        if (acilis >= 0) metin = metin[..acilis];
+        metin = Regex.Replace(metin, @"```[a-zA-Z]*", "");
+        return metin.Replace("**", "").Trim();
+    }
+
     public static (List<EkipOnerisi> ekipler, string gerekce, int? guven)? Ayristir(string ham, Katalog katalog)
     {
-        var metin = Regex.Replace(ham ?? "", @"<think>.*?</think>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        metin = Regex.Replace(metin, @"```(json)?", "", RegexOptions.IgnoreCase);
+        var metin = Temizle(ham);
+        return SatirlardanAyristir(metin, katalog) ?? JsondanAyristir(metin, katalog);
+    }
+
+    static readonly Regex AnahtarSatiri = new(@"^\s*(?:[-*•#>]+\s*)?(?<anahtar>EK[İI]P(?:\s*\d+)?|G[ÜU]VEN|GEREK[ÇC]E|ANAL[İI]Z)\s*[:：=]\s*(?<deger>.*)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// EKIP: ad | rol | görev / GUVEN: %80 / GEREKCE: ... biçimini okur.
+    static (List<EkipOnerisi>, string, int?)? SatirlardanAyristir(string metin, Katalog katalog)
+    {
+        var ekipler = new List<EkipOnerisi>();
+        var gerekce = new StringBuilder();
+        int? guven = null;
+        string? sonAnahtar = null;
+
+        foreach (var satir in metin.Split('\n'))
+        {
+            var m = AnahtarSatiri.Match(satir.TrimEnd('\r'));
+            if (!m.Success)
+            {
+                // GEREKCE birden fazla satıra yayılabilir
+                if (sonAnahtar is "GEREKCE" && satir.Trim().Length > 0) gerekce.Append(' ').Append(satir.Trim());
+                continue;
+            }
+            var anahtar = Metin.Normalize(m.Groups["anahtar"].Value).ToUpperInvariant();
+            var deger = m.Groups["deger"].Value.Trim();
+            if (anahtar.StartsWith("EKIP"))
+            {
+                sonAnahtar = "EKIP";
+                var parcalar = deger.Split('|', 3).Select(p => p.Trim().Trim('[', ']', '<', '>', '"', '\'')).ToArray();
+                if (parcalar[0].Length == 0) continue;
+                var rol = parcalar.Length > 1 && parcalar[1].Length > 0 ? parcalar[1] : (ekipler.Count == 0 ? "Sorumlu" : "Destek");
+                var gorev = parcalar.Length > 2 ? parcalar[2] : "";
+                // Model rolü yazmayıp ikinci alana doğrudan görevi yazmış olabilir
+                if (parcalar.Length == 2 && Metin.Normalize(rol) is not ("sorumlu" or "destek")) { gorev = rol; rol = ekipler.Count == 0 ? "Sorumlu" : "Destek"; }
+                EkipEkle(ekipler, katalog, parcalar[0], rol, gorev);
+            }
+            else if (anahtar.StartsWith("GUVEN"))
+            {
+                sonAnahtar = "GUVEN";
+                if (Regex.Match(deger, @"\d+") is { Success: true } g) guven = Math.Clamp(int.Parse(g.Value), 0, 100);
+            }
+            else
+            {
+                sonAnahtar = "GEREKCE";
+                gerekce.Append(gerekce.Length > 0 ? " " : "").Append(deger);
+            }
+        }
+        return ekipler.Count == 0 ? null : (ekipler, gerekce.ToString().Trim(), guven);
+    }
+
+    static void EkipEkle(List<EkipOnerisi> ekipler, Katalog katalog, string ad, string rol, string gorev)
+    {
+        var eslesen = katalog.EkipBul(ad);
+        var nihaiAd = eslesen?.Ad ?? ad.Trim();
+        if (ekipler.Any(e => e.Ekip == nihaiAd)) return;
+        var normRol = Metin.Normalize(rol);
+        rol = normRol.StartsWith("sorumlu") ? "Sorumlu" : normRol.StartsWith("destek") ? "Destek" : rol;
+        ekipler.Add(new EkipOnerisi(nihaiAd, rol, gorev, eslesen is not null));
+    }
+
+    /// Yedek: model yine de JSON döndürdüyse onu okur.
+    static (List<EkipOnerisi>, string, int?)? JsondanAyristir(string metin, Katalog katalog)
+    {
         int bas = metin.IndexOf('{'), son = metin.LastIndexOf('}');
         if (bas < 0 || son <= bas) return null;
 
@@ -644,12 +724,8 @@ static class CevapAyristirici
         {
             var ad = item is JsonValue v ? v.ToString() : Str(item, "ekip", "ekip_adi", "ad", "team");
             if (string.IsNullOrWhiteSpace(ad)) continue;
-            var eslesen = katalog.EkipBul(ad);
             var rol = Str(item, "rol", "role") is { Length: > 0 } r ? r : (ekipler.Count == 0 ? "Sorumlu" : "Destek");
-            var gorev = Str(item, "gorev", "görev", "gorevi", "task", "aciklama") ?? "";
-            var nihaiAd = eslesen?.Ad ?? ad.Trim();
-            if (ekipler.Any(e => e.Ekip == nihaiAd)) continue;
-            ekipler.Add(new EkipOnerisi(nihaiAd, rol, gorev, eslesen is not null));
+            EkipEkle(ekipler, katalog, ad, rol, Str(item, "gorev", "görev", "gorevi", "task", "aciklama") ?? "");
         }
 
         var gerekce = Str(obj, "gerekce", "gerekçe", "analiz", "reason") ?? "";
@@ -658,8 +734,7 @@ static class CevapAyristirici
         if (guvenMetni is not null && Regex.Match(guvenMetni, @"\d+") is { Success: true } m)
             guven = Math.Clamp(int.Parse(m.Value), 0, 100);
 
-        if (ekipler.Count == 0) return null;
-        return (ekipler, gerekce, guven);
+        return ekipler.Count == 0 ? null : (ekipler, gerekce, guven);
     }
 }
 
@@ -737,7 +812,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
         {
             try
             {
-                var ham = await ModeliCagirAsync(mesajlar, ct);
+                var (ham, bitisNedeni) = await ModeliCagirAsync(mesajlar, ct);
                 s.HamCevap = ham;
                 if (CevapAyristirici.Ayristir(ham, katalog) is { } karar)
                 {
@@ -748,9 +823,18 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
                     s.Durum = "Tamam";
                     return;
                 }
-                sonHata = "Model yanıtı beklenen JSON biçiminde değil.";
-                mesajlar.Add(new("assistant", ham));
-                mesajlar.Add(new("user", "Yanıtın geçerli JSON değildi veya ekip içermiyordu. Hiçbir açıklama eklemeden yalnızca istenen JSON nesnesini döndür."));
+                var temiz = CevapAyristirici.Temizle(ham);
+                sonHata = bitisNedeni == "length"
+                    ? $"Yanıt MaksToken ({ayar.MaksToken}) sınırında kesildi; appsettings.json'da MaksToken'ı artırın veya DusunmeyiKapat'ı açın."
+                    : temiz.Length == 0
+                        ? "Model boş yanıt döndü (yanıtın tamamı düşünme bloğu olabilir; DusunmeyiKapat ayarını deneyin)."
+                        : $"Model yanıtı beklenen biçimde değil: {Metin.Kisalt(temiz.ReplaceLineEndings(" "), 200)}";
+                log.LogWarning("Satır {Satir} deneme {Deneme}: {Hata}", s.SatirNo, deneme, sonHata);
+                if (temiz.Length > 0)
+                {
+                    mesajlar.Add(new("assistant", temiz));
+                    mesajlar.Add(new("user", "Yanıtın istenen biçimde değildi. Hiçbir açıklama eklemeden yalnızca şu satırları yaz:\nEKIP: <listeden ekip adı> | Sorumlu | <ne yapacak>\nGUVEN: %<0-100>\nGEREKCE: <kısa gerekçe>"));
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -770,7 +854,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
         s.Durum = "Hata";
     }
 
-    async Task<string> ModeliCagirAsync(List<Mesaj> mesajlar, CancellationToken ct)
+    async Task<(string icerik, string bitisNedeni)> ModeliCagirAsync(List<Mesaj> mesajlar, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ayar.QwenApiUrl)) throw new InvalidOperationException("appsettings.json: YzAyarlari:QwenApiUrl tanımlı değil.");
 
@@ -782,6 +866,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
         };
         if (ayar.MaksToken > 0) payload["max_tokens"] = ayar.MaksToken;
         if (ayar.JsonModu) payload["response_format"] = new { type = "json_object" };
+        if (ayar.DusunmeyiKapat) payload["chat_template_kwargs"] = new { enable_thinking = false };
 
         using var req = new HttpRequestMessage(HttpMethod.Post, ayar.QwenApiUrl) { Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json") };
         if (!string.IsNullOrWhiteSpace(ayar.QwenApiKey)) req.Headers.Add("Authorization", $"Bearer {ayar.QwenApiKey}");
@@ -793,7 +878,11 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
             throw new HttpRequestException($"YZ servisi HTTP {(int)res.StatusCode}: {Metin.Kisalt(govde, 300)}");
 
         using var doc = JsonDocument.Parse(govde);
-        return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+        var secim = doc.RootElement.GetProperty("choices")[0];
+        var bitis = secim.TryGetProperty("finish_reason", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() ?? "" : "";
+        var mesaj = secim.GetProperty("message");
+        var icerik = mesaj.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : "";
+        return (icerik, bitis);
     }
 
     /// Kullanıcının E kolonundaki ekiplerle modelin önerisini karşılaştırır.
