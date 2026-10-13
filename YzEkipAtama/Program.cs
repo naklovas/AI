@@ -190,10 +190,9 @@ class YzAyarlari
     public List<string>? EkKurallar { get; set; }
     public List<string> Kurallar() => EkKurallar ??
     [
-        "İş birimlerinden gelen taleplerin alınması ve yönetimi Pergel uygulaması üzerinden {STRATEJİK PLANLAMA ve KOORDİNASYON} tarafından yürütülür. " +
-        "Bu nedenle talep yönetimi, kapsamın belirlenmesi ve kapsam değişiklikleri, paydaşların belirlenmesi ve sürece dahil edilmesi, " +
-        "paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama) konularının geneli {STRATEJİK PLANLAMA ve KOORDİNASYON} sorumluluğundadır; " +
-        "bu maddelerde Sorumlu ekip {STRATEJİK PLANLAMA ve KOORDİNASYON} olmalı, konunun uzmanı ekipler gerekiyorsa Destek olarak eklenmelidir."
+        "YALNIZCA maddenin ASIL KONUSU iş birimi talebinin alınması/takibi (Pergel), proje kapsamının belirlenmesi, paydaşların projeye dahil edilmesi " +
+        "veya proje iletişimi ise Sorumlu ekip {STRATEJİK PLANLAMA ve KOORDİNASYON} olur. Risk, uyum, hukuk, güvenlik, veri, model, altyapı, test, eğitim, " +
+        "denetim gibi konularda bu kuralı UYGULAMA; o konuların sahibi ekibi seç (bu ekibi sırf maddede 'süreç', 'koordinasyon' veya 'planlama' geçtiği için seçme)."
     ];
 }
 
@@ -218,11 +217,7 @@ class ExcelAyarlari
         new EkEkip
         {
             Ad = "STRATEJİK PLANLAMA ve KOORDİNASYON",
-            Aciklama = "Kurumun proje yönetimi ofisi (PMO) işlevi bu birimdedir: iş birimlerinden gelen taleplerin Pergel uygulaması üzerinden alınması, " +
-                       "değerlendirilmesi ve takibi (talep yönetimi); proje başlatma ve onay süreçleri, kapsam yönetimi ve kapsam değişiklikleri, " +
-                       "paydaşların belirlenmesi ve sürece dahil edilmesi, paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama), " +
-                       "proje/program planlama, kaynak ve bütçe takibi, proje portföy yönetimi, proje yönetişimi, kilometre taşı ve risk takibi, " +
-                       "proje durum raporlaması, ekip görevlendirme koordinasyonu."
+            Aciklama = "Talep ve proje koordinasyonu: iş birimlerinden gelen taleplerin Pergel uygulaması üzerinden alınması ve takibi, proje kapsamının belirlenmesi ve kapsam değişiklikleri, paydaşların belirlenmesi ve projeye dahil edilmesi, paydaş/proje iletişimi."
         }
     ];
 }
@@ -235,7 +230,12 @@ record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kateg
 
 record Mesaj(string role, string content);
 
-record EkipOnerisi(string Ekip, string Rol, string Gorev, bool KatalogdaVar);
+record EkipOnerisi(string Ekip, string Rol, string Gorev, bool KatalogdaVar)
+{
+    /// Model katalogda bu işin sahibi olabilecek ekip bulamadığında kullanılan kayıt (zorla alakasız ekip seçmesin diye)
+    public const string UygunEkipYok = "KATALOGDA UYGUN EKİP YOK";
+    public bool SahipsizMi => Ekip == UygunEkipYok;
+}
 
 record ProsedurOnerisi(string Kod, string Ad, string Birim, string Link, string Iliski);
 
@@ -293,8 +293,9 @@ class KontrolSatiri
     public List<string> GonderilenProsedurler = [];
     public int PromptKarakter;
 
-    public string EkipMetni() => string.Join("\n", Ekipler.Select(e =>
-        $"• {e.Ekip} ({e.Rol}){(e.KatalogdaVar ? "" : " [katalogda bulunamadı]")}: {e.Gorev}"));
+    public string EkipMetni() => string.Join("\n", Ekipler.Select(e => e.SahipsizMi
+        ? $"• {e.Ekip}{(e.Gorev.Length > 0 ? $" (olması gereken işlev: {e.Gorev})" : "")}"
+        : $"• {e.Ekip} ({e.Rol}){(e.KatalogdaVar ? "" : " [katalogda bulunamadı]")}: {e.Gorev}"));
 
     public string ProsedurMetni() => Durum != "Tamam" ? "" : Prosedurler.Count == 0
         ? (GonderilenProsedurler.Count > 0 ? "İlgili mevcut prosedür bulunamadı." : "")
@@ -946,7 +947,7 @@ static class PromptOlusturucu
         var kurallar = ayar.Kurallar().Where(k => !string.IsNullOrWhiteSpace(k))
             .Select(k => Regex.Replace(k, @"\{([^{}]+)\}", m => katalog.EkipBul(m.Groups[1].Value)?.Etiket ?? m.Groups[1].Value))
             .ToList();
-        return kurallar.Count == 0 ? "" : "\n1d. KURUM KURALLARI (bu kurallar katalogdaki servis adlarından ÖNCELİKLİDİR):" +
+        return kurallar.Count == 0 ? "" : "\n1d. KURUM KURALLARI (yalnızca belirtilen konular için geçerlidir):" +
             string.Concat(kurallar.Select(k => "\n    - " + k));
     }
 
@@ -1027,13 +1028,15 @@ static class PromptOlusturucu
         sb.AppendLine($@"KURALLAR:
 1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı bu işe uyan ekibi seç.
 1a. İSİM BENZERLİĞİ TUZAĞI (ÇOK KRİTİK): Bu maddelerin TAMAMI zaten yapay zeka geliştirme sürecine aittir. Bu yüzden maddede ""yapay zeka"", ""YZ"", ""model"" geçmesi veya ekip adında ""Yapay Zeka"" bulunması, işi o ekibe vermek için TEK BAŞINA SEBEP DEĞİLDİR.
-    Ekibi işin TÜRÜNE göre seç: ekip görevlendirme/organizasyon/süreç tanımlama, proje planlama ve takip, bilgi güvenliği ve sızma testi, kişisel veri/KVKK, hukuk/uyum, risk, altyapı/sunucu, değişiklik ve sürüm yönetimi, eğitim, satın alma gibi işler bu görev alanlarına sahip ekiplere aittir.{GenelEkipKurali(katalog, ayar)}
+    Ekibi işin TÜRÜNE ve servis kataloğundaki görev alanına göre seç; örneğin risk konusu risk yönetimi işlevi olan ekibe, güvenlik testi bilgi güvenliğine, kişisel veri veri yönetişimine/KVKK'ya, altyapı işi altyapı ekibine, değişiklik ve sürüm işi değişiklik yönetimine aittir.
+    DENGE: Hiçbir ekip ""varsayılan"" veya ""her şeyin sahibi"" değildir. Bir ekibi yalnızca servis adları/açıklamaları{(prosedurVar ? "/prosedürleri" : "")} maddenin konusuyla DOĞRUDAN uyuşuyorsa seç; maddede geçen genel kelimeler (süreç, koordinasyon, planlama, yönetim, çerçeve, yapay zeka) tek başına sebep değildir.
+    ÖRNEK: ""Mevcut Kurumsal Risk Yönetimi çerçevesine YZ Yasal Uyum Riski kategorisi eklenmelidir"" maddesinin konusu RİSK YÖNETİMİDİR; sorumlusu risk yönetimi işlevi olan ekiptir (gerekirse uyum/hukuk işlevi olan ekip destek). Planlama/koordinasyon ekibi veya YZ ekibi sorumlu OLAMAZ; katalogda risk yönetimi işlevi olan ekip yoksa ""EKIP: YOK | - | Kurumsal Risk Yönetimi"" yaz.
 1c. MEVCUT SÜREÇ ÖNCELİĞİ (ÇOK KRİTİK): Önce maddedeki FAALİYETİ belirle (talep, kapsam, paydaş, iletişim, değişiklik, test, güvenlik, veri koruma, envanter, eğitim, satın alma, raporlama vb.).
     Bu faaliyet kurumda zaten bir servis{(prosedurVar ? " veya yukarıdaki prosedürlerden biri" : "")} ile yürütülüyorsa SORUMLU, o servisin{(prosedurVar ? "/prosedürün" : "")} sahibi ekiptir. Kontrol maddesi bu mevcut süreç içinde değerlendirilir; işin yapay zeka ile ilgili olması onu yeni veya farklı bir ekibe TAŞIMAZ.
     YZ'ye özgü teknik katkı gerekiyorsa ilgili YZ ekibi yalnızca DESTEK olarak eklenir. Gerekçede hangi mevcut servise/sürece dayandığını yaz.{KurumKurallari(katalog, ayar)}
 2. YALNIZCA yukarıdaki listede [E...] koduyla verilen ekipleri seçebilirsin. Her ekibi KODU VE ADIYLA, listede yazıldığı gibi AYNEN yaz (örn: [E001] ...).
    Listede olmayan birim, müdürlük, komite, ofis veya ekip adı UYDURMA; kendi bildiğin genel birim adlarını (""Risk Yönetimi"", ""YZ Ofisi"", ""Hukuk"" vb.) listede yoksa ASLA yazma. Listede olmayan ad yazılan yanıt GEÇERSİZ sayılır.
-   İşi birebir karşılayan ekip yoksa görev alanı en yakın olan listedeki ekibi seç ve GUVEN değerini düşür.
+   Katalogda bu işin sahibi olabilecek HİÇBİR ekip yoksa alakasız bir ekibi ZORLA SEÇME; tek satır ""EKIP: YOK | - | <işin sahibi olması gereken işlev, örn. Kurumsal Risk Yönetimi>"" yaz ve GEREKCE'de nedenini açıkla. Kısmen uyan bir ekip varsa onu seç ve GUVEN değerini düşür.
 3. En az 1, en fazla {ayar.MaksEkipSayisi} ekip seç. İlk ekibin rolü ""Sorumlu"" (işin sahibi), diğerlerinin rolü ""Destek"" olsun. Gereksiz yere ekip ekleme.
 4. Her ekip için bu maddede somut olarak NE YAPACAĞINI 1-2 cümleyle yaz (örn: ""Atama yazısını hazırlar ve süreç sahibini belirler"").
 5. Kullanıcının ön görüşüne körü körüne uyma. Servis kataloğuyla uyumluysa destekleyici kanıt olarak kullan; uyumsuzsa gerekçede nedenini kısaca belirt.
@@ -1144,6 +1147,12 @@ static class CevapAyristirici
                 var gorev = parcalar.Length > 2 ? parcalar[2] : "";
                 // Model rolü yazmayıp ikinci alana doğrudan görevi yazmış olabilir
                 if (parcalar.Length == 2 && Metin.Normalize(rol) is not ("sorumlu" or "destek")) { gorev = rol; rol = ekipler.Count == 0 ? "Sorumlu" : "Destek"; }
+                if (Metin.Normalize(parcalar[0]) is "yok" or "bulunamadi" or "uygun ekip yok" or "katalogda uygun ekip yok" or "-")
+                {
+                    if (!ekipler.Any(e => e.SahipsizMi))
+                        ekipler.Add(new EkipOnerisi(EkipOnerisi.UygunEkipYok, "Yok", parcalar.Length > 2 ? parcalar[2] : (parcalar.Length > 1 ? parcalar[1] : ""), true));
+                    continue;
+                }
                 EkipEkle(ekipler, katalog, parcalar[0], rol, gorev);
             }
             else if (anahtar.StartsWith("GUVEN"))
@@ -1418,6 +1427,8 @@ class IsYoneticisi
                 s.HamCevap = ham;
                 if (CevapAyristirici.Ayristir(ham, katalog) is { } karar)
                 {
+                    // "YOK" başka ekiplerle birlikte yazıldıysa anlamsızdır; gerçek ekipler kalır
+                    if (karar.ekipler.Count > 1) karar.ekipler.RemoveAll(e => e.SahipsizMi);
                     var uydurma = karar.ekipler.Where(e => !e.KatalogdaVar).Select(e => e.Ekip).ToList();
                     bool sonDeneme = deneme >= Math.Max(1, ayar.DenemeSayisi);
                     if (uydurma.Count > 0 && !sonDeneme)
@@ -1440,7 +1451,7 @@ class IsYoneticisi
                         break;
                     }
                     // Sorumlu çıkarıldıysa ilk kalan ekip sorumlu olur
-                    if (!gecerli.Any(e => e.Rol == "Sorumlu")) gecerli[0] = gecerli[0] with { Rol = "Sorumlu" };
+                    if (!gecerli[0].SahipsizMi && !gecerli.Any(e => e.Rol == "Sorumlu")) gecerli[0] = gecerli[0] with { Rol = "Sorumlu" };
                     if (uydurma.Count > 0)
                         karar.gerekce += $" (Not: katalogda bulunmayan {string.Join(", ", uydurma.Select(u => $"'{u}'"))} önerisi çıkarıldı.)";
 

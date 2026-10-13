@@ -44,8 +44,10 @@ Uygulama `http://localhost:5080` adresinde açılır.
 
 - Sürecin bütün maddeleri zaten YZ ile ilgili olduğu için "yapay / zeka / YZ" kelimeleri anahtar kelime puanlamasında yok sayılır.
 - Prompt, ekibin işin türüne göre seçilmesini ister. `GenelAdliEkipler` listesindeki ekipler (varsayılan: YAPAY ZEKA UYGULAMALARI) yalnızca iş doğrudan model geliştirme veya işletme ise sorumlu yapılır.
-- `ExcelAyarlari:KatalogaEklenecekEkipler` listesindeki ekipler ile ekiplere ek görev tanımı verilir: ad katalogdaki ekiple eşleşirse tanım o ekibe eklenir, eşleşmezse katalog dışı yeni ekip olarak eklenir. Varsayılan: STRATEJİK PLANLAMA ve KOORDİNASYON için PMO görev tanımı (talep yönetimi/Pergel, kapsam, paydaş, iletişim).
-- `EkKurallar` listesindeki kurum kuralları prompt'a öncelikli kural olarak eklenir. `{EKİP ADI}` yazılan yerler ekibin `[E...]` koduyla değiştirilir. Varsayılan kural: Pergel üzerinden talep yönetimi, kapsam, paydaş yönetimi ve iletişim konuları STRATEJİK PLANLAMA ve KOORDİNASYON birimindedir.
+- `ExcelAyarlari:KatalogaEklenecekEkipler` listesindeki ekipler ile ekiplere ek görev tanımı verilir: ad katalogdaki ekiple eşleşirse tanım o ekibe eklenir, eşleşmezse katalog dışı yeni ekip olarak eklenir. Varsayılan: STRATEJİK PLANLAMA ve KOORDİNASYON için dar bir görev tanımı (talep yönetimi/Pergel, kapsam, paydaş, iletişim).
+- `EkKurallar` listesindeki kurum kuralları prompt'a öncelikli kural olarak eklenir. `{EKİP ADI}` yazılan yerler ekibin `[E...]` koduyla değiştirilir. Varsayılan kural yalnızca maddenin asıl konusu talep (Pergel), kapsam, paydaş veya proje iletişimi ise STRATEJİK PLANLAMA ve KOORDİNASYON'u sorumlu yapar; risk, uyum, güvenlik, veri gibi konularda uygulanmaz.
+- Denge kuralı: hiçbir ekip varsayılan ekip değildir; ekip yalnızca servis/prosedür içeriği maddeyle doğrudan uyuşuyorsa seçilir.
+- Katalogda uygun ekip yoksa model alakasız ekip seçmek yerine `EKIP: YOK` yazar; sonuç "KATALOGDA UYGUN EKİP YOK" ve olması gereken işlevle gösterilir.
 - Mevcut süreç önceliği: maddedeki faaliyet kurumda zaten bir serviste veya prosedürde yürütülüyorsa sorumlu o süreci yürüten ekiptir; YZ ekibi en fazla destek olur.
 
 ## Hücre içinde birden fazla madde

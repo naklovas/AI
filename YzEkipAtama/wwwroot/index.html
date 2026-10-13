@@ -477,8 +477,8 @@ function filtrele() {
 }
 
 function ekipKartlari(s) {
-  return s.ekipler.map(e => `<div class="ekip-kart"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span>
-    <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev" style="font-size:13.5px;color:var(--text)">${esc(e.gorev)}</div></div>`).join('');
+  return s.ekipler.map(e => `<div class="ekip-kart"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar && e.rol !== 'Yok' ? '' : 'yok'}">${esc(e.ekip)}</span>
+    <span class="muted">${e.rol === 'Yok' ? 'olması gereken işlev:' : esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev" style="font-size:13.5px;color:var(--text)">${esc(e.gorev)}</div></div>`).join('');
 }
 function prosedurListesi(s, kisa) {
   if (!s.prosedurler.length) return s.durum === 'Tamam' && s.gonderilenProsedurler.length ? '<span class="muted">İlgili mevcut prosedür yok</span>' : '<span class="muted">—</span>';
@@ -486,7 +486,7 @@ function prosedurListesi(s, kisa) {
     <div class="gorev">${esc(p.birim)}${!kisa && p.iliski ? ' · ' + esc(p.iliski) : ''}</div></div>`).join('');
 }
 function tekSonucCiz(s) {
-  const sorumlu = s.ekipler.filter(e => e.rol === 'Sorumlu'), destek = s.ekipler.filter(e => e.rol !== 'Sorumlu');
+  const sorumlu = s.ekipler.filter(e => e.rol === 'Sorumlu' || e.rol === 'Yok'), destek = s.ekipler.filter(e => e.rol !== 'Sorumlu' && e.rol !== 'Yok');
   $('#tekSonuc').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <b>Sonuç</b>
@@ -527,7 +527,7 @@ function ciz() {
       <td class="muted">${s.satirNo}${s.altToplam > 1 ? `<div style="font-size:11px">${s.altNo}/${s.altToplam}</div>` : ''}</td>
       <td><div class="kirp">${esc(s.altKategori)}</div></td>
       <td><div class="kirp">${esc(s.aksiyon)}</div></td>
-      <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
+      <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar && e.rol !== 'Yok' ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${e.rol === 'Yok' ? 'olması gereken işlev:' : esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
       <td><div class="kirp">${esc(s.gerekce)}</div></td>
       ${veri.prosedurVar ? `<td><div class="kirp">${prosedurListesi(s, true)}</div></td>` : ''}
       <td>${s.guven != null ? `<div class="guven"><div class="g"><i style="width:${s.guven}%;background:${guvenRenk(s.guven)}"></i></div><b>%${s.guven}</b></div>` : '<span class="muted">—</span>'}</td>
