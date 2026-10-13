@@ -226,7 +226,8 @@ let katalogVar = false;
 function katalogGoster(k) {
   katalogVar = !!k.var;
   $('#katalogDurum').innerHTML = k.var
-    ? `Aktif katalog: <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}`
+    ? `Aktif katalog: <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}` +
+      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '')
     : '<span class="hata">Henüz katalog yüklenmedi. Önce servis kataloğunu yükleyin.</span>';
   $('#dropKatalog').classList.toggle('dolu', katalogVar);
   butonlariGuncelle();
@@ -511,7 +512,7 @@ function ciz() {
   const aciklar = new Set([...document.querySelectorAll('#govde tr.acik')].map(tr => tr.dataset.sira));
   $('#govde').innerHTML = satirlar.map(s => `
     <tr data-sira="${s.sira}" class="${aciklar.has(String(s.sira)) ? 'acik' : ''}">
-      <td class="muted">${s.satirNo}</td>
+      <td class="muted">${s.satirNo}${s.altToplam > 1 ? `<div style="font-size:11px">${s.altNo}/${s.altToplam}</div>` : ''}</td>
       <td><div class="kirp">${esc(s.altKategori)}</div></td>
       <td><div class="kirp">${esc(s.aksiyon)}</div></td>
       <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
@@ -536,7 +537,7 @@ let detaySira = null;
 function detayAc(sira) {
   const s = veri.satirlar.find(x => x.sira === sira); if (!s) return;
   detaySira = sira;
-  $('#dTitle').textContent = `${veri.tur === 'Metin' ? 'Madde' : 'Excel satırı'} ${s.satirNo} · ${s.durum}`;
+  $('#dTitle').textContent = `${veri.tur === 'Metin' ? 'Madde' : 'Excel satırı'} ${s.satirNo}${s.altToplam > 1 ? ` · alt madde ${s.altNo}/${s.altToplam}` : ''} · ${s.durum}`;
   $('#dIc').innerHTML = `
     <h3>Madde</h3>
     <dl>

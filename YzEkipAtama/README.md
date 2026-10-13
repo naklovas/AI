@@ -40,6 +40,21 @@ Uygulama `http://localhost:5080` adresinde açılır.
 - **Metinle sor** sekmesine yapılacak işi yazıp **Ekipleri Bul**'a basın. Sorumlu ve destek ekipler, her birinin görevi ve karar gerekçesi gösterilir. "Her satırı ayrı bir iş olarak değerlendir" seçiliyse her satır ayrı bir madde olur; baştaki `1.`, `-` gibi işaretler atılır. Sonuçlar gridde listelenir ve Excel olarak indirilebilir.
 - **Kontrol listesi** (varsa) üçüncü alana yüklenir; **Kontrol Listesini Analiz Et** ile bütün maddeler işlenir.
 
+## İsim benzerliği ve katalog dışı ekipler
+
+- Sürecin bütün maddeleri zaten YZ ile ilgili olduğu için "yapay / zeka / YZ" kelimeleri anahtar kelime puanlamasında yok sayılır.
+- Prompt, ekibin işin türüne göre seçilmesini ister. `GenelAdliEkipler` listesindeki ekipler (varsayılan: YAPAY ZEKA UYGULAMALARI) yalnızca iş doğrudan model geliştirme veya işletme ise sorumlu yapılır.
+- `ExcelAyarlari:KatalogaEklenecekEkipler` listesindeki ekipler (varsayılan: PROJE YÖNETİMİ OFİSİ) görev tanımlarıyla birlikte katalogdaymış gibi modele gönderilir. Adı katalogdaki bir ekiple eşleşirse görev tanımı o ekibe eklenir.
+
+## Hücre içinde birden fazla madde
+
+`HucreMaddeleriniAyir` açıkken (varsayılan) şu durumlarda hücre maddelere bölünür ve her madde ayrı değerlendirilir:
+- Satırlar `-`, `•`, `1.`, `1)`, `a)` gibi işaretlerle başlıyorsa,
+- Hücrede alt alta yazılmış ayrı cümleler varsa,
+- Aynı satırda `1) … 2) …` biçiminde numaralandırma varsa.
+
+"Aşağıdakiler yapılmalıdır:" gibi bir giriş satırı her maddeye bağlam olarak eklenir. Sonuçlar Excel'de aynı hücreye `[1/3] …`, `[2/3] …` başlıklarıyla yazılır; gridde her madde ayrı satırdır.
+
 ## Uydurma ekip adına karşı önlemler
 
 - Her ekibe prompt'ta `[E012]` gibi bir kod verilir. Modelden ekibi koduyla birlikte yazması istenir. Ad hatalı yazılsa da kod doğruysa eşleşme yapılır.

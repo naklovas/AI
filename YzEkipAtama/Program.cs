@@ -156,6 +156,12 @@ static async Task<byte[]> OkuAsync(IFormFile dosya)
 
 record MetinSorusu(string? Metin, bool HerSatirAyriMadde);
 
+class EkEkip
+{
+    public string Ad { get; set; } = "";
+    public string Aciklama { get; set; } = "";
+}
+
 class YzAyarlari
 {
     public string QwenApiUrl { get; set; } = "";
@@ -177,6 +183,9 @@ class YzAyarlari
     public int ServisAciklamaMaksKarakter { get; set; } = 250;
     /// Prosedür listesi yüklüyse her maddeyle en ilgili kaç prosedür modele gönderilsin (0 = gönderme)
     public int IlgiliProsedurSayisi { get; set; } = 15;
+    /// Adı çok genel olduğu için her işi kendine çeken ekipler; prompt'ta bu ekipler için ayrıca uyarı verilir
+    public List<string>? GenelAdliEkipler { get; set; }
+    public List<string> GenelEkipler() => GenelAdliEkipler ?? ["YAPAY ZEKA UYGULAMALARI"];
 }
 
 class ExcelAyarlari
@@ -190,6 +199,20 @@ class ExcelAyarlari
     /// Prosedür listesinde başlıklar bulunamazsa kullanılacak kolon harfleri
     public string ProsedurAdKolonu { get; set; } = "D";
     public string ProsedurBirimKolonu { get; set; } = "H";
+    /// Kontrol hücresinde birden fazla madde varsa (-, •, 1., a) veya alt alta satırlar) her biri ayrı değerlendirilir
+    public bool HucreMaddeleriniAyir { get; set; } = true;
+    /// Katalogda olmayan ama kurumda var olan ekipler (ör. Proje Yönetimi Ofisi). Boş bırakılırsa varsayılan liste kullanılır.
+    public List<EkEkip>? KatalogaEklenecekEkipler { get; set; }
+
+    public List<EkEkip> EkEkipler() => KatalogaEklenecekEkipler ??
+    [
+        new EkEkip
+        {
+            Ad = "PROJE YÖNETİMİ OFİSİ",
+            Aciklama = "Kurum genelinde proje yönetimi ofisi (PMO): proje başlatma ve onay süreçleri, proje planlama, kaynak ve bütçe takibi, " +
+                       "proje portföy yönetimi, proje yönetişimi, kilometre taşı ve risk takibi, proje durum raporlaması, ekip görevlendirme koordinasyonu."
+        }
+    ];
 }
 
 // =====================================================================
@@ -240,6 +263,10 @@ class KontrolSatiri
     public string KullaniciEkip { get; init; } = "";
     public string KullaniciNot { get; init; } = "";
     public bool Serbest { get; init; }
+    /// Hücre birden fazla maddeye bölündüyse: bu maddenin sırası, toplam madde sayısı ve hücrenin tamamı
+    public int AltNo { get; init; } = 1;
+    public int AltToplam { get; init; } = 1;
+    public string HucreMetni { get; init; } = "";
 
     // İşlem sonucu (arka plan görevleri tarafından güncellenir)
     public volatile string Durum = "Bekliyor";
@@ -298,6 +325,8 @@ class AnalizIsi
         {
             sira = s.Sira,
             satirNo = s.SatirNo,
+            altNo = s.AltNo,
+            altToplam = s.AltToplam,
             altKategori = s.AltKategori,
             aksiyon = s.Aksiyon,
             alanlar = s.Alanlar.Select(a => new { ad = a.Key, deger = a.Value }),
@@ -334,7 +363,9 @@ static class Metin
         "edilmelidir", "yapılmalıdır", "tarafından", "gibi", "vb", "vs", "ilgili", "her", "tüm", "göre", "kadar",
         "daha", "en", "mi", "ne", "çok", "ise", "hem", "ama", "fakat", "sonra", "önce", "üzerinde", "üzerinden",
         "içinde", "içerisinde", "konusunda", "yapılması", "edilmesi", "sağlanmalıdır", "bulunmalıdır", "gerekir",
-        "gereklidir", "olup", "olacak", "var", "yok", "aksiyon", "kontrol", "the", "and", "for", "of", "to", "in"
+        "gereklidir", "olup", "olacak", "var", "yok", "aksiyon", "kontrol", "the", "and", "for", "of", "to", "in",
+        // Sürecin tamamı YZ ile ilgili; bu kelimeler ayırt edici değildir ve adında geçen ekibi kayırır
+        "yapay", "zeka", "yz", "ai", "yapayzeka"
     }.Select(Normalize));
 
     public static string Normalize(string? s)
@@ -552,6 +583,60 @@ class ProsedurKutuphanesi
 }
 
 // =====================================================================
+// HÜCRE İÇİ MADDE AYIRMA
+// =====================================================================
+
+static class MaddeAyirici
+{
+    // Satır başı madde işaretleri: -, •, *, 1. 1) 1-, a) a.
+    static readonly Regex Isaret = new(@"^\s*(?:[-–—•*▪●○◦·►✓]|\d{1,2}\s*[.)\-]|[a-zA-ZçğıöşüÇĞİÖŞÜ]\s*[)])\s*(?=\S)");
+    // Aynı satır içinde "1) ... 2) ..." veya "a) ... b) ..."
+    static readonly Regex SatirIci = new(@"(?:^|(?<=[\s;:,.]))(?:\d{1,2}|[a-zçğıöşü])\)\s+");
+
+    public static List<string> Ayir(string metin)
+    {
+        var satirlar = metin.Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+        if (satirlar.Count >= 2)
+        {
+            // "Aşağıdakiler yapılmalıdır:" gibi giriş satırı maddelere bağlam olarak eklenir
+            var giris = satirlar[0].EndsWith(':') && !Isaret.IsMatch(satirlar[0]) ? satirlar[0] : "";
+            var govde = giris.Length > 0 ? satirlar.Skip(1).ToList() : satirlar;
+            var maddeler = new List<string>();
+            if (govde.Count(x => Isaret.IsMatch(x)) >= 2)
+            {
+                foreach (var x in govde)
+                {
+                    if (Isaret.IsMatch(x) || maddeler.Count == 0) maddeler.Add(Isaret.Replace(x, "", 1).Trim());
+                    else maddeler[^1] += " " + x; // işaretsiz satır önceki maddenin devamıdır
+                }
+            }
+            else if (govde.Count >= 2 && govde.All(x => x.Length >= 15))
+            {
+                maddeler = govde; // işaretsiz ama alt alta yazılmış ayrı cümleler
+            }
+            if (maddeler.Count >= 2)
+                return maddeler.Select(m => giris.Length > 0 ? $"{giris} {m}" : m).ToList();
+        }
+
+        var eslesmeler = SatirIci.Matches(metin);
+        if (eslesmeler.Count >= 2)
+        {
+            var giris = metin[..eslesmeler[0].Index].Trim();
+            var maddeler = new List<string>();
+            for (int i = 0; i < eslesmeler.Count; i++)
+            {
+                int bas = eslesmeler[i].Index + eslesmeler[i].Length;
+                int son = i + 1 < eslesmeler.Count ? eslesmeler[i + 1].Index : metin.Length;
+                var m = metin[bas..son].Trim().TrimEnd(';', ',').Trim();
+                if (m.Length > 0) maddeler.Add(giris.Length > 0 ? $"{giris} {m}" : m);
+            }
+            if (maddeler.Count >= 2) return maddeler;
+        }
+        return [metin];
+    }
+}
+
+// =====================================================================
 // EXCEL OKUMA / YAZMA
 // =====================================================================
 
@@ -625,9 +710,13 @@ static class ExcelIslemleri
             if (sv.Ad.Length > 0 && sv.Bolum.Length > 0) servisler.Add(sv);
         }
 
-        var katalog = new Katalog(servisler);
-        if (katalog.Ekipler.Count == 0) throw new ExcelOkumaHatasi("Servis kataloğunda hiç ekip (Servis Sahibi Bölüm) bulunamadı.");
-        return katalog;
+        if (servisler.Count == 0) throw new ExcelOkumaHatasi("Servis kataloğunda hiç ekip (Servis Sahibi Bölüm) bulunamadı.");
+
+        // Katalogda olmayan ama kurumda var olan ekipler; adı katalogdaki bir ekiple eşleşirse o ekibe görev tanımı olarak eklenir
+        var ilk = new Katalog(servisler);
+        foreach (var ek in ayar.EkEkipler().Where(e => !string.IsNullOrWhiteSpace(e.Ad)))
+            servisler.Add(new Servis("EK", "Genel görev tanımı", ilk.EkipBul(ek.Ad)?.Ad ?? ek.Ad.Trim(), "", "Ek tanım (katalog dışı)", ek.Aciklama.Trim()));
+        return new Katalog(servisler);
     }
 
     public static List<Prosedur> ProsedurOku(byte[] bytes, ExcelAyarlari ayar)
@@ -710,18 +799,27 @@ static class ExcelIslemleri
             var r = ws.Row(i);
             var aksiyon = Deger(r.Cell(aksiyonKolon));
             if (aksiyon.Length == 0) continue;
-            satirlar.Add(new KontrolSatiri
+            var altKategori = altKategoriKolon == 0 ? "" : Deger(r.Cell(altKategoriKolon));
+            var alanlar = bilgiKolonlari
+                .Select(k => new KeyValuePair<string, string>(string.IsNullOrEmpty(basliklar[k]) ? $"Kolon {XLHelper.GetColumnLetterFromNumber(k)}" : basliklar[k], Deger(r.Cell(k))))
+                .Where(kv => kv.Value.Length > 0).ToList();
+            var maddeler = ayar.HucreMaddeleriniAyir ? MaddeAyirici.Ayir(aksiyon) : [aksiyon];
+            for (int j = 0; j < maddeler.Count; j++)
             {
-                Sira = satirlar.Count + 1,
-                SatirNo = i,
-                Aksiyon = aksiyon,
-                AltKategori = altKategoriKolon == 0 ? "" : Deger(r.Cell(altKategoriKolon)),
-                Alanlar = bilgiKolonlari
-                    .Select(k => new KeyValuePair<string, string>(string.IsNullOrEmpty(basliklar[k]) ? $"Kolon {XLHelper.GetColumnLetterFromNumber(k)}" : basliklar[k], Deger(r.Cell(k))))
-                    .Where(kv => kv.Value.Length > 0).ToList(),
-                KullaniciEkip = Deger(r.Cell(ekipKolon)),
-                KullaniciNot = Deger(r.Cell(notKolon))
-            });
+                satirlar.Add(new KontrolSatiri
+                {
+                    Sira = satirlar.Count + 1,
+                    SatirNo = i,
+                    Aksiyon = maddeler[j],
+                    AltNo = j + 1,
+                    AltToplam = maddeler.Count,
+                    HucreMetni = maddeler.Count > 1 ? aksiyon : "",
+                    AltKategori = altKategori,
+                    Alanlar = alanlar,
+                    KullaniciEkip = Deger(r.Cell(ekipKolon)),
+                    KullaniciNot = Deger(r.Cell(notKolon))
+                });
+            }
         }
         if (satirlar.Count == 0) throw new ExcelOkumaHatasi("Kontrol listesinde 'Aksiyon / Kontrol' kolonu dolu hiç satır bulunamadı.");
 
@@ -789,13 +887,17 @@ static class ExcelIslemleri
             ws.Column(kolon).Width = genislik;
         }
 
-        foreach (var s in k.Satirlar)
+        // Bir hücre birden fazla maddeye bölündüyse sonuçlar aynı hücreye [1/3], [2/3]... başlıklarıyla yazılır
+        foreach (var grup in k.Satirlar.GroupBy(s => s.SatirNo))
         {
-            var degerler = new List<(int, string)> { (k.CiktiEkipKolonu, s.EkipMetni()), (k.CiktiGerekceKolonu, s.GerekceMetni()) };
-            if (analiz.Prosedurler is not null) degerler.Add((k.CiktiProsedurKolonu, s.ProsedurMetni()));
+            var liste = grup.OrderBy(s => s.AltNo).ToList();
+            string Birlestir(Func<KontrolSatiri, string> f) => liste.Count == 1 ? f(liste[0])
+                : string.Join("\n\n", liste.Select(s => $"[{s.AltNo}/{s.AltToplam}] {Metin.Kisalt(s.Aksiyon, 90)}\n{f(s)}"));
+            var degerler = new List<(int, string)> { (k.CiktiEkipKolonu, Birlestir(s => s.EkipMetni())), (k.CiktiGerekceKolonu, Birlestir(s => s.GerekceMetni())) };
+            if (analiz.Prosedurler is not null) degerler.Add((k.CiktiProsedurKolonu, Birlestir(s => s.ProsedurMetni())));
             foreach (var (kolon, deger) in degerler)
             {
-                var hucre = ws.Cell(s.SatirNo, kolon);
+                var hucre = ws.Cell(grup.Key, kolon);
                 hucre.Value = deger;
                 hucre.Style.Alignment.WrapText = true;
                 hucre.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
@@ -818,6 +920,14 @@ static class PromptOlusturucu
         "Sen bir bankanın BT organizasyonunu, servis kataloğunu ve yapay zeka yönetişimini (NIST AI RMF, ISO/IEC 42001, BDDK düzenlemeleri) " +
         "iyi bilen kıdemli bir süreç ve yönetişim analistisin. Görevin, yapay zeka geliştirme sürecine ait aksiyon/kontrol maddelerini " +
         "veya kullanıcının anlattığı işleri kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen satır formatında, Türkçe yanıt verirsin.";
+
+    static string GenelEkipKurali(Katalog katalog, YzAyarlari ayar)
+    {
+        var ekipler = ayar.GenelEkipler().Select(katalog.EkipBul).OfType<Ekip>().Distinct().Select(e => e.Etiket).ToList();
+        return ekipler.Count == 0 ? "" :
+            $"\n    {string.Join(", ", ekipler)} ekibini YALNIZCA işin kendisi model geliştirme, model eğitimi, YZ uygulamasının kodlanması veya işletilmesi ise Sorumlu yap; " +
+            "diğer işlerde gerekiyorsa en fazla Destek olarak ekle.";
+    }
 
     public static string Olustur(KontrolSatiri s, Katalog katalog, List<Ekip> adaylar, YzAyarlari ayar,
         List<Prosedur>? ilgiliProsedurler = null, ProsedurKutuphanesi? kutuphane = null)
@@ -862,7 +972,12 @@ static class PromptOlusturucu
         {
             sb.AppendLine("DEĞERLENDİRİLECEK MADDE:");
             if (s.AltKategori.Length > 0) sb.AppendLine($"- Alt Kategori: {s.AltKategori}");
-            sb.AppendLine($"- AKSİYON / KONTROL: {s.Aksiyon}");
+            if (s.AltToplam > 1)
+            {
+                sb.AppendLine($"- AKSİYON / KONTROL (hücredeki {s.AltToplam} ayrı maddeden {s.AltNo}. madde; YALNIZCA BU MADDE için ekip seç): {s.Aksiyon}");
+                sb.AppendLine($"- Hücrenin tamamı (yalnızca bağlam için): {s.HucreMetni.ReplaceLineEndings(" ")}");
+            }
+            else sb.AppendLine($"- AKSİYON / KONTROL: {s.Aksiyon}");
         }
         foreach (var a in s.Alanlar) sb.AppendLine($"- {a.Key}: {a.Value}");
         sb.AppendLine();
@@ -890,6 +1005,8 @@ static class PromptOlusturucu
 
         sb.AppendLine($@"KURALLAR:
 1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı bu işe uyan ekibi seç.
+1a. İSİM BENZERLİĞİ TUZAĞI (ÇOK KRİTİK): Bu maddelerin TAMAMI zaten yapay zeka geliştirme sürecine aittir. Bu yüzden maddede ""yapay zeka"", ""YZ"", ""model"" geçmesi veya ekip adında ""Yapay Zeka"" bulunması, işi o ekibe vermek için TEK BAŞINA SEBEP DEĞİLDİR.
+    Ekibi işin TÜRÜNE göre seç: ekip görevlendirme/organizasyon/süreç tanımlama, proje planlama ve takip, bilgi güvenliği ve sızma testi, kişisel veri/KVKK, hukuk/uyum, risk, altyapı/sunucu, değişiklik ve sürüm yönetimi, eğitim, satın alma gibi işler bu görev alanlarına sahip ekiplere aittir.{GenelEkipKurali(katalog, ayar)}
 2. YALNIZCA yukarıdaki listede [E...] koduyla verilen ekipleri seçebilirsin. Her ekibi KODU VE ADIYLA, listede yazıldığı gibi AYNEN yaz (örn: [E001] ...).
    Listede olmayan birim, müdürlük, komite, ofis veya ekip adı UYDURMA; kendi bildiğin genel birim adlarını (""Risk Yönetimi"", ""YZ Ofisi"", ""Hukuk"" vb.) listede yoksa ASLA yazma. Listede olmayan ad yazılan yanıt GEÇERSİZ sayılır.
    İşi birebir karşılayan ekip yoksa görev alanı en yakın olan listedeki ekibi seç ve GUVEN değerini düşür.
@@ -1123,7 +1240,8 @@ class IsYoneticisi
             yuklenme = katalogZamani,
             ekipSayisi = katalog.Ekipler.Count,
             servisSayisi = katalog.Ekipler.Sum(e => e.Servisler.Count),
-            aciklamaliServis = katalog.Ekipler.Sum(e => e.Servisler.Count(sv => sv.Aciklama.Length > 0))
+            aciklamaliServis = katalog.Ekipler.Sum(e => e.Servisler.Count(sv => sv.Aciklama.Length > 0 && sv.Kod != "EK")),
+            ekTanimliEkipler = katalog.Ekipler.Where(e => e.Servisler.Any(sv => sv.Kod == "EK")).Select(e => e.Ad)
         };
 
     public void KatalogYukle(byte[] bytes, string dosyaAdi)
