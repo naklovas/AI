@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YZ Ekip Atama</title>
+<style>
+:root{
+  --bg:#f4f6f9;--panel:#fff;--panel2:#f8fafc;--text:#1b2430;--muted:#64748b;--line:#e2e8f0;
+  --accent:#2563eb;--accent-soft:#dbeafe;--ok:#15803d;--ok-soft:#dcfce7;--warn:#b45309;--warn-soft:#fef3c7;
+  --err:#b91c1c;--err-soft:#fee2e2;--chip:#eef2ff;--chip-text:#3730a3;--shadow:0 1px 3px rgba(15,23,42,.08),0 4px 16px rgba(15,23,42,.04);
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#0f141b;--panel:#161d27;--panel2:#1b2430;--text:#e5e9f0;--muted:#94a3b8;--line:#2a3442;
+  --accent:#60a5fa;--accent-soft:#1e3a5f;--ok:#4ade80;--ok-soft:#163a26;--warn:#fbbf24;--warn-soft:#3d2f10;
+  --err:#f87171;--err-soft:#3f1717;--chip:#25264a;--chip-text:#c7d2fe;--shadow:none}
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--panel);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;font-weight:600}
+header .meta{color:var(--muted);font-size:12px;margin-left:auto}
+main{padding:20px 24px;max-width:1800px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
+.upload{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:stretch}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:4px;transition:.15s;background:var(--panel2)}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{font-size:13px}.drop span{color:var(--muted);font-size:12px;word-break:break-all}
+.drop.dolu{border-style:solid;border-color:var(--ok)}
+.drop input{display:none}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:7px;padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.sm{padding:3px 8px;font-size:12px}
+.progress{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.bar{flex:1;min-width:200px;height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .4s}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:110px;cursor:default}
+.stat.tik{cursor:pointer}.stat.tik:hover{border-color:var(--accent)}
+.stat b{display:block;font-size:20px}.stat span{color:var(--muted);font-size:12px}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.filters label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:3px}
+.filters input,.filters select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);min-width:150px}
+.filters input[type=search]{min-width:260px}
+.tablo-kap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+table{border-collapse:separate;border-spacing:0;width:100%;min-width:1300px}
+th{position:sticky;top:0;background:var(--panel2);text-align:left;font-weight:600;font-size:12px;color:var(--muted);padding:9px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;z-index:1}
+th.sirali::after{content:" ▲"}th.sirali.azalan::after{content:" ▼"}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:var(--panel2)}
+.kirp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+tr.acik .kirp{-webkit-line-clamp:unset;display:block}
+.ekip{margin-bottom:6px}
+.chip{display:inline-block;background:var(--chip);color:var(--chip-text);border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;margin-right:4px}
+.chip.destek{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.chip.yok{background:var(--err-soft);color:var(--err)}
+.gorev{color:var(--muted);font-size:12.5px;margin-top:2px}
+.rozet{display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+.r-Tamam,.r-Aynı{background:var(--ok-soft);color:var(--ok)}
+.r-Kısmi,.r-İşleniyor{background:var(--warn-soft);color:var(--warn)}
+.r-Hata,.r-Farklı,.r-İptal{background:var(--err-soft);color:var(--err)}
+.r-Bekliyor,.r-Eşleşmedi{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+.guven{display:flex;align-items:center;gap:6px;min-width:90px}
+.guven .g{flex:1;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;border:1px solid var(--line)}
+.guven .g i{display:block;height:100%}
+.muted{color:var(--muted)}
+.hata{color:var(--err)}
+.top-ekipler{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.top-ekipler .chip{cursor:pointer;font-weight:500}
+dialog{border:1px solid var(--line);border-radius:12px;padding:0;max-width:900px;width:92vw;background:var(--panel);color:var(--text)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg-bas{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+.dlg-ic{padding:16px 18px;max-height:75vh;overflow:auto}
+.dlg-ic h3{font-size:13px;color:var(--muted);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+.dlg-ic dl{display:grid;grid-template-columns:200px 1fr;gap:4px 12px;margin:0}
+.dlg-ic dt{color:var(--muted)}.dlg-ic dd{margin:0;white-space:pre-wrap}
+pre{white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;max-height:260px;overflow:auto}
+.uyari{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.gizli{display:none!important}
+@media (max-width:900px){.upload{grid-template-columns:1fr}main{padding:12px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>YZ Geliştirme Süreci · Ekip Atama</h1>
+  <div class="meta" id="meta">Ayarlar yükleniyor…</div>
+</header>
+<main>
+  <div class="uyari gizli" id="apiUyari">appsettings.json içinde <b>QwenApiUrl</b> tanımlı değil; model çağrıları hata verecek.</div>
+
+  <section class="card">
+    <div class="upload">
+      <label class="drop" id="dropKontrol">
+        <b>1 · Kontrol listesi (.xlsx)</b>
+        <span id="adKontrol">Aksiyon / Kontrol maddelerinin olduğu dosya. Tıkla veya sürükle bırak.</span>
+        <input type="file" accept=".xlsx" id="fKontrol">
+      </label>
+      <label class="drop" id="dropKatalog">
+        <b>2 · Servis kataloğu (.xlsx)</b>
+        <span id="adKatalog">Servis Kodu, Servis Adı, Servis Sahibi Bölüm… Tıkla veya sürükle bırak.</span>
+        <input type="file" accept=".xlsx" id="fKatalog">
+      </label>
+      <div style="display:flex;flex-direction:column;gap:8px;justify-content:center">
+        <button class="primary" id="btnBaslat" disabled>Analizi Başlat</button>
+      </div>
+    </div>
+    <div id="yuklemeHata" class="hata" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card gizli" id="durumKart">
+    <div class="progress">
+      <b id="durumMetni">—</b>
+      <div class="bar"><i id="barIc"></i></div>
+      <span id="sayac" class="muted"></span>
+      <button id="btnIptal">Durdur</button>
+      <button id="btnHatalilar" class="gizli">Hatalıları yeniden çalıştır</button>
+      <button class="primary" id="btnExcel">Excel'i İndir</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="top-ekipler" id="topEkipler"></div>
+  </section>
+
+  <section class="card gizli" id="filtreKart">
+    <div class="filters">
+      <label>Ara<input type="search" id="fAra" placeholder="Madde, ekip, gerekçe…"></label>
+      <label>Alt kategori<select id="fAlt"><option value="">Tümü</option></select></label>
+      <label>Önerilen ekip<select id="fEkip"><option value="">Tümü</option></select></label>
+      <label>Rol<select id="fRol"><option value="">Sorumlu + Destek</option><option value="Sorumlu">Yalnız sorumlu</option></select></label>
+      <label>Senin görüşünle uyum<select id="fUyum"><option value="">Tümü</option><option>Aynı</option><option>Kısmi</option><option>Farklı</option><option>Eşleşmedi</option><option value="-">E kolonu boş</option></select></label>
+      <label>Durum<select id="fDurum"><option value="">Tümü</option><option>Tamam</option><option>İşleniyor</option><option>Bekliyor</option><option>Hata</option><option>İptal</option></select></label>
+      <label><span>En düşük güven: %<b id="gDeger">0</b></span><input type="range" id="fGuven" min="0" max="100" step="5" value="0"></label>
+      <label><span>En yüksek güven: %<b id="gDegerMax">100</b></span><input type="range" id="fGuvenMax" min="0" max="100" step="5" value="100"></label>
+      <button id="btnTemizle">Filtreleri temizle</button>
+      <span class="muted" id="gorunen" style="margin-left:auto"></span>
+    </div>
+  </section>
+
+  <div class="tablo-kap gizli" id="tabloKap">
+    <table>
+      <thead><tr>
+        <th data-k="satirNo">Satır</th>
+        <th data-k="altKategori">Alt Kategori</th>
+        <th data-k="aksiyon" style="width:24%">Aksiyon / Kontrol</th>
+        <th data-k="ekipMetni" style="width:26%">YZ Önerilen Ekipler ve Görevleri</th>
+        <th data-k="gerekce" style="width:22%">YZ Karar Gerekçesi</th>
+        <th data-k="guven">Güven</th>
+        <th data-k="kullaniciEkip">Senin görüşün (E)</th>
+        <th data-k="uyum">Uyum</th>
+        <th data-k="durum">Durum</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="govde"></tbody>
+    </table>
+  </div>
+</main>
+
+<dialog id="detay">
+  <div class="dlg-bas"><b id="dTitle"></b><div><button class="sm" id="dYeniden">Yeniden çalıştır</button> <button class="sm" id="dKapat">Kapat</button></div></div>
+  <div class="dlg-ic" id="dIc"></div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const depo = { al(k){ try { return localStorage.getItem(k); } catch { return null; } }, yaz(k,v){ try { v==null ? localStorage.removeItem(k) : localStorage.setItem(k,v); } catch {} } };
+
+let isId = null, veri = null, zamanlayici = null, sirala = { k: 'satirNo', azalan: false };
+const dosyalar = { kontrol: null, katalog: null };
+
+// ---------- ayarlar ----------
+fetch('/api/ayarlar').then(r => r.json()).then(a => {
+  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Aday ekip: ${a.adayEkipSayisi || 'tümü'} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
+}).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
+
+// ---------- dosya seçimi ----------
+function dosyaBagla(tur, dropId, inputId, adId) {
+  const drop = $(dropId), input = $(inputId);
+  const sec = f => { if (!f) return; dosyalar[tur] = f; $(adId).textContent = f.name; drop.classList.add('dolu'); $('#btnBaslat').disabled = !(dosyalar.kontrol && dosyalar.katalog); };
+  input.addEventListener('change', () => sec(input.files[0]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); sec(e.dataTransfer.files[0]); });
+}
+dosyaBagla('kontrol', '#dropKontrol', '#fKontrol', '#adKontrol');
+dosyaBagla('katalog', '#dropKatalog', '#fKatalog', '#adKatalog');
+
+$('#btnBaslat').addEventListener('click', async () => {
+  $('#yuklemeHata').textContent = '';
+  $('#btnBaslat').disabled = true;
+  const fd = new FormData();
+  fd.append('kontrol', dosyalar.kontrol);
+  fd.append('katalog', dosyalar.katalog);
+  try {
+    const r = await fetch('/api/is', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.hata || r.statusText);
+    isId = j.id; depo.yaz('yzIsId', isId);
+    filtreleriDoldur(j, true);
+    guncelle(j);
+    izle();
+  } catch (e) {
+    $('#yuklemeHata').textContent = 'Hata: ' + e.message;
+  } finally {
+    $('#btnBaslat').disabled = !(dosyalar.kontrol && dosyalar.katalog);
+  }
+});
+
+// ---------- durum takibi ----------
+function izle() {
+  clearTimeout(zamanlayici);
+  zamanlayici = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/is/' + isId);
+      if (r.status === 404) { depo.yaz('yzIsId', null); return; }
+      const j = await r.json();
+      guncelle(j);
+      const devam = j.durum === 'Çalışıyor' || j.satirlar.some(s => s.durum === 'İşleniyor' || s.durum === 'Bekliyor');
+      if (devam) izle();
+    } catch { izle(); }
+  }, 2000);
+}
+
+async function yenidenCalistir(sira) {
+  await fetch(`/api/is/${isId}/satir/${sira}/yeniden`, { method: 'POST' });
+  const s = veri.satirlar.find(x => x.sira === sira); if (s) s.durum = 'İşleniyor';
+  ciz(); izle();
+}
+
+$('#btnIptal').addEventListener('click', () => fetch(`/api/is/${isId}/iptal`, { method: 'POST' }).then(izle));
+$('#btnExcel').addEventListener('click', () => { location.href = `/api/is/${isId}/excel`; });
+$('#btnHatalilar').addEventListener('click', async () => {
+  for (const s of veri.satirlar.filter(s => s.durum === 'Hata' || s.durum === 'İptal'))
+    await fetch(`/api/is/${isId}/satir/${s.sira}/yeniden`, { method: 'POST' });
+  izle();
+});
+
+function guncelle(j) {
+  for (const s of j.satirlar) s.ekipMetni = s.ekipler.map(e => e.ekip).join(', ');
+  veri = j;
+  ['#durumKart', '#filtreKart', '#tabloKap'].forEach(id => $(id).classList.remove('gizli'));
+  const bitti = j.tamamlanan + j.hatali + j.satirlar.filter(s => s.durum === 'İptal').length;
+  $('#barIc').style.width = (100 * bitti / Math.max(1, j.toplam)) + '%';
+  $('#durumMetni').textContent = `${j.dosyaAdi} · ${j.durum}`;
+  $('#sayac').textContent = `${bitti} / ${j.toplam} madde · ${j.ekipSayisi} ekip, ${j.servisSayisi} servis`;
+  $('#btnIptal').classList.toggle('gizli', j.durum !== 'Çalışıyor');
+  $('#btnHatalilar').classList.toggle('gizli', !j.satirlar.some(s => s.durum === 'Hata' || s.durum === 'İptal') || j.durum === 'Çalışıyor');
+
+  const tamam = j.satirlar.filter(s => s.durum === 'Tamam');
+  const ort = tamam.length ? Math.round(tamam.reduce((a, s) => a + (s.guven ?? 0), 0) / tamam.length) : 0;
+  const say = u => j.satirlar.filter(s => s.uyum === u).length;
+  const stat = (deger, etiket, filtre) => `<div class="stat ${filtre ? 'tik' : ''}" ${filtre ? `data-f='${JSON.stringify(filtre)}'` : ''}><b>${deger}</b><span>${etiket}</span></div>`;
+  $('#stats').innerHTML =
+    stat(j.toplam, 'Toplam madde', { fDurum: '' }) +
+    stat(j.tamamlanan, 'Tamamlanan', { fDurum: 'Tamam' }) +
+    stat(j.hatali, 'Hatalı', { fDurum: 'Hata' }) +
+    stat('%' + ort, 'Ortalama güven') +
+    stat(tamam.filter(s => (s.guven ?? 0) < 60).length, 'Düşük güven (<60)', { fGuven: 0, fGuvenMax: 55 }) +
+    stat(say('Aynı'), 'Seninle aynı', { fUyum: 'Aynı' }) +
+    stat(say('Kısmi'), 'Kısmen aynı', { fUyum: 'Kısmi' }) +
+    stat(say('Farklı'), 'Farklı', { fUyum: 'Farklı' });
+
+  const sayim = {};
+  for (const s of tamam) for (const e of s.ekipler) sayim[e.ekip] = (sayim[e.ekip] || 0) + 1;
+  $('#topEkipler').innerHTML = Object.entries(sayim).sort((a, b) => b[1] - a[1]).slice(0, 25)
+    .map(([ad, n]) => `<span class="chip" data-ekip="${esc(ad)}" title="Bu ekibe filtrele">${esc(ad)} · ${n}</span>`).join('');
+
+  filtreleriDoldur(j, false);
+  ciz();
+}
+
+$('#stats').addEventListener('click', e => {
+  const el = e.target.closest('.stat.tik'); if (!el) return;
+  filtreTemizle();
+  const f = JSON.parse(el.dataset.f);
+  for (const [k, v] of Object.entries(f)) $('#' + k).value = v;
+  ciz();
+});
+$('#topEkipler').addEventListener('click', e => {
+  const el = e.target.closest('[data-ekip]'); if (!el) return;
+  $('#fEkip').value = el.dataset.ekip; ciz();
+});
+
+// ---------- filtreler ----------
+function secenekDoldur(sel, degerler) {
+  const mevcut = sel.value, ilk = sel.options[0].outerHTML;
+  sel.innerHTML = ilk + degerler.map(d => `<option>${esc(d)}</option>`).join('');
+  sel.value = degerler.includes(mevcut) ? mevcut : '';
+}
+function filtreleriDoldur(j, ilk) {
+  const tr = (a, b) => a.localeCompare(b, 'tr');
+  if (ilk || $('#fAlt').options.length <= 1)
+    secenekDoldur($('#fAlt'), [...new Set(j.satirlar.map(s => s.altKategori).filter(Boolean))].sort(tr));
+  const onerilen = new Set(j.satirlar.flatMap(s => s.ekipler.map(e => e.ekip)));
+  if (onerilen.size !== $('#fEkip').options.length - 1)
+    secenekDoldur($('#fEkip'), [...onerilen].sort(tr));
+}
+['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum', '#fGuven', '#fGuvenMax'].forEach(id => $(id).addEventListener('input', ciz));
+function filtreTemizle() {
+  ['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum'].forEach(id => $(id).value = '');
+  $('#fGuven').value = 0; $('#fGuvenMax').value = 100;
+}
+$('#btnTemizle').addEventListener('click', () => { filtreTemizle(); ciz(); });
+
+document.querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click', () => {
+  sirala = { k: th.dataset.k, azalan: sirala.k === th.dataset.k ? !sirala.azalan : false };
+  ciz();
+}));
+
+function filtrele() {
+  const ara = $('#fAra').value.toLocaleLowerCase('tr'), alt = $('#fAlt').value, ekip = $('#fEkip').value, rol = $('#fRol').value,
+        uyum = $('#fUyum').value, durum = $('#fDurum').value, gmin = +$('#fGuven').value, gmax = +$('#fGuvenMax').value;
+  $('#gDeger').textContent = gmin; $('#gDegerMax').textContent = gmax;
+  const guvenFiltreli = gmin > 0 || gmax < 100;
+  return veri.satirlar.filter(s => {
+    if (alt && s.altKategori !== alt) return false;
+    if (ekip && !s.ekipler.some(e => e.ekip === ekip && (!rol || e.rol === rol))) return false;
+    if (uyum && (uyum === '-' ? s.kullaniciEkip : s.uyum !== uyum)) return false;
+    if (durum && s.durum !== durum) return false;
+    if (guvenFiltreli && (s.guven == null || s.guven < gmin || s.guven > gmax)) return false;
+    if (ara) {
+      const hepsi = [s.aksiyon, s.altKategori, s.gerekce, s.kullaniciEkip, s.kullaniciNot, ...s.ekipler.flatMap(e => [e.ekip, e.gorev]), ...s.alanlar.map(a => a.deger)].join(' ').toLocaleLowerCase('tr');
+      if (!hepsi.includes(ara)) return false;
+    }
+    return true;
+  });
+}
+
+function guvenRenk(g) { return g >= 75 ? 'var(--ok)' : g >= 55 ? 'var(--warn)' : 'var(--err)'; }
+
+function ciz() {
+  if (!veri) return;
+  const satirlar = filtrele();
+  const { k, azalan } = sirala;
+  satirlar.sort((a, b) => {
+    const x = a[k] ?? '', y = b[k] ?? '';
+    const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'tr');
+    return azalan ? -r : r;
+  });
+  document.querySelectorAll('th[data-k]').forEach(th => { th.classList.toggle('sirali', th.dataset.k === k); th.classList.toggle('azalan', th.dataset.k === k && azalan); });
+  $('#gorunen').textContent = `${satirlar.length} / ${veri.satirlar.length} madde gösteriliyor`;
+
+  const aciklar = new Set([...document.querySelectorAll('#govde tr.acik')].map(tr => tr.dataset.sira));
+  $('#govde').innerHTML = satirlar.map(s => `
+    <tr data-sira="${s.sira}" class="${aciklar.has(String(s.sira)) ? 'acik' : ''}">
+      <td class="muted">${s.satirNo}</td>
+      <td><div class="kirp">${esc(s.altKategori)}</div></td>
+      <td><div class="kirp">${esc(s.aksiyon)}</div></td>
+      <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
+      <td><div class="kirp">${esc(s.gerekce)}</div></td>
+      <td>${s.guven != null ? `<div class="guven"><div class="g"><i style="width:${s.guven}%;background:${guvenRenk(s.guven)}"></i></div><b>%${s.guven}</b></div>` : '<span class="muted">—</span>'}</td>
+      <td><div class="kirp">${esc(s.kullaniciEkip) || '<span class="muted">—</span>'}</div></td>
+      <td>${s.uyum ? `<span class="rozet r-${esc(s.uyum)}">${esc(s.uyum)}</span>` : '<span class="muted">—</span>'}</td>
+      <td><span class="rozet r-${esc(s.durum)}">${esc(s.durum)}</span></td>
+      <td><button class="sm" data-detay="${s.sira}">Detay</button></td>
+    </tr>`).join('');
+}
+
+$('#govde').addEventListener('click', e => {
+  const btn = e.target.closest('[data-detay]');
+  if (btn) { detayAc(+btn.dataset.detay); return; }
+  const tr = e.target.closest('tr'); if (tr && !window.getSelection().toString()) tr.classList.toggle('acik');
+});
+
+// ---------- detay ----------
+let detaySira = null;
+function detayAc(sira) {
+  const s = veri.satirlar.find(x => x.sira === sira); if (!s) return;
+  detaySira = sira;
+  $('#dTitle').textContent = `Excel satırı ${s.satirNo} · ${s.durum}`;
+  $('#dIc').innerHTML = `
+    <h3>Madde</h3>
+    <dl>
+      <dt>Alt Kategori</dt><dd>${esc(s.altKategori)}</dd>
+      <dt>Aksiyon / Kontrol</dt><dd>${esc(s.aksiyon)}</dd>
+      ${s.alanlar.map(a => `<dt>${esc(a.ad)}</dt><dd>${esc(a.deger)}</dd>`).join('')}
+    </dl>
+    <h3>Senin ön görüşün (ipucu olarak gönderildi)</h3>
+    <dl><dt>Ekipler (E)</dt><dd>${esc(s.kullaniciEkip) || '—'}</dd><dt>Mevcut süreç (F)</dt><dd>${esc(s.kullaniciNot) || '—'}</dd><dt>Uyum</dt><dd>${esc(s.uyum) || '—'}</dd></dl>
+    <h3>YZ önerisi ${s.guven != null ? '· güven %' + s.guven : ''}</h3>
+    ${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span> <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || '—'}
+    <h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce) || '—'}</div>
+    ${s.hata ? `<h3>Hata</h3><div class="hata">${esc(s.hata)}</div>` : ''}
+    <h3>Ön elemede modele detaylı gönderilen aday ekipler (${s.adaylar.length})</h3><div class="muted">${s.adaylar.map(esc).join(' · ') || '—'}</div>
+    <h3>Modelin ham yanıtı</h3><pre>${esc(s.hamCevap) || '—'}</pre>`;
+  $('#detay').showModal();
+}
+$('#dKapat').addEventListener('click', () => $('#detay').close());
+$('#dYeniden').addEventListener('click', () => { $('#detay').close(); yenidenCalistir(detaySira); });
+
+// ---------- sayfa yenilenirse son işe bağlan ----------
+const sonIs = depo.al('yzIsId');
+if (sonIs) {
+  fetch('/api/is/' + sonIs).then(r => r.ok ? r.json() : Promise.reject()).then(j => {
+    isId = j.id; filtreleriDoldur(j, true); guncelle(j); izle();
+  }).catch(() => depo.yaz('yzIsId', null));
+}
+</script>
+</body>
+</html>
