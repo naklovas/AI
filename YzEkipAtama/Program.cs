@@ -44,6 +44,24 @@ app.MapGet("/api/ayarlar", (YzAyarlari a, ExcelAyarlari e) => new
     apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl)
 });
 
+app.MapGet("/api/katalog", (IsYoneticisi yonetici) => yonetici.KatalogBilgisi());
+
+app.MapPost("/api/katalog", async (HttpRequest req, IsYoneticisi yonetici) =>
+{
+    if (!req.HasFormContentType || req.Form.Files["katalog"] is not { } dosya)
+        return Results.BadRequest(new { hata = "Servis kataloğu Excel dosyası gerekli." });
+    try
+    {
+        yonetici.KatalogYukle(await OkuAsync(dosya), dosya.FileName);
+        return Results.Ok(yonetici.KatalogBilgisi());
+    }
+    catch (ExcelOkumaHatasi ex)
+    {
+        return Results.BadRequest(new { hata = ex.Message });
+    }
+});
+
+// Excel ile toplu analiz. Katalog gönderilmezse son yüklenen katalog kullanılır.
 app.MapPost("/api/is", async (HttpRequest req, IsYoneticisi yonetici) =>
 {
     if (!req.HasFormContentType)
@@ -51,13 +69,27 @@ app.MapPost("/api/is", async (HttpRequest req, IsYoneticisi yonetici) =>
     var form = await req.ReadFormAsync();
     var kontrolDosya = form.Files["kontrol"];
     var katalogDosya = form.Files["katalog"];
-    if (kontrolDosya is null || katalogDosya is null)
-        return Results.BadRequest(new { hata = "Kontrol listesi ve servis kataloğu Excel dosyalarının ikisi de gerekli." });
+    if (kontrolDosya is null)
+        return Results.BadRequest(new { hata = "Kontrol listesi Excel dosyası gerekli." });
 
     try
     {
-        var analiz = yonetici.Baslat(await OkuAsync(kontrolDosya), kontrolDosya.FileName, await OkuAsync(katalogDosya));
+        if (katalogDosya is not null) yonetici.KatalogYukle(await OkuAsync(katalogDosya), katalogDosya.FileName);
+        var analiz = yonetici.ExcelIleBaslat(await OkuAsync(kontrolDosya), kontrolDosya.FileName);
         return Results.Ok(analiz.Durum());
+    }
+    catch (ExcelOkumaHatasi ex)
+    {
+        return Results.BadRequest(new { hata = ex.Message });
+    }
+});
+
+// Serbest metinle soru: işi anlat, ekipleri öğren. HerSatirAyriMadde=true ise her dolu satır ayrı madde olur.
+app.MapPost("/api/sor", (MetinSorusu soru, IsYoneticisi yonetici) =>
+{
+    try
+    {
+        return Results.Ok(yonetici.MetinleBaslat(soru.Metin ?? "", soru.HerSatirAyriMadde).Durum());
     }
     catch (ExcelOkumaHatasi ex)
     {
@@ -99,6 +131,8 @@ static async Task<byte[]> OkuAsync(IFormFile dosya)
 // AYARLAR
 // =====================================================================
 
+record MetinSorusu(string? Metin, bool HerSatirAyriMadde);
+
 class YzAyarlari
 {
     public string QwenApiUrl { get; set; } = "";
@@ -111,7 +145,7 @@ class YzAyarlari
     public int ZamanAsimiDakika { get; set; } = 5;
     public bool SertifikaDogrulamasiniAtla { get; set; } = true;
     public int Paralellik { get; set; } = 3;
-    public int DenemeSayisi { get; set; } = 2;
+    public int DenemeSayisi { get; set; } = 3;
     public bool OnElemeYap { get; set; }
     public int AdayEkipSayisi { get; set; } = 20;
     public int EkipBasinaServisSayisi { get; set; } = 12;
@@ -143,6 +177,9 @@ class Ekip
 {
     public required string Ad { get; init; }
     public required string Norm { get; init; }
+    /// Prompt'ta kullanılan kısa kod (E001...). Küçük modeller uzun adı yanlış kopyalasa da kodu doğru yazar.
+    public string Kod { get; set; } = "";
+    public string Etiket => $"[{Kod}] {Ad}";
     public List<Servis> Servisler { get; } = [];
     public HashSet<string> AdKokleri { get; set; } = [];
     public Dictionary<string, double> Kokler { get; } = [];
@@ -158,6 +195,7 @@ class KontrolSatiri
     public List<KeyValuePair<string, string>> Alanlar { get; init; } = [];
     public string KullaniciEkip { get; init; } = "";
     public string KullaniciNot { get; init; } = "";
+    public bool Serbest { get; init; }
 
     // İşlem sonucu (arka plan görevleri tarafından güncellenir)
     public volatile string Durum = "Bekliyor";
@@ -183,7 +221,8 @@ class AnalizIsi
     public string Id { get; } = Guid.NewGuid().ToString("N")[..12];
     public DateTime Baslangic { get; } = DateTime.Now;
     public required string DosyaAdi { get; init; }
-    public required byte[] KontrolBytes { get; init; }
+    /// Metinle sorulan işlerde null'dır; Excel çıktısı sıfırdan üretilir.
+    public byte[]? KontrolBytes { get; init; }
     public required KontrolDosyasi Kontrol { get; init; }
     public required Katalog Katalog { get; init; }
     public CancellationTokenSource Iptal { get; } = new();
@@ -192,6 +231,7 @@ class AnalizIsi
     public object Durum() => new
     {
         id = Id,
+        tur = KontrolBytes is null ? "Metin" : "Excel",
         dosyaAdi = DosyaAdi,
         baslangic = Baslangic,
         durum = GenelDurum,
@@ -290,6 +330,7 @@ class Katalog
             ekip.Servisler.Add(sv);
         }
         Ekipler = gruplar.Values.OrderBy(e => e.Ad, StringComparer.Create(new CultureInfo("tr-TR"), true)).ToList();
+        for (int i = 0; i < Ekipler.Count; i++) Ekipler[i].Kod = $"E{i + 1:000}";
 
         foreach (var e in Ekipler)
         {
@@ -312,8 +353,17 @@ class Katalog
     }
 
     /// Model ya da kullanıcı tarafından yazılmış bir ekip adını katalogdaki ekiple eşleştirir.
+    static readonly Regex KodDeseni = new(@"^\s*\[?\s*E\s*0*(\d{1,4})\s*\]?\s*[-:.)]?\s*", RegexOptions.IgnoreCase);
+
     public Ekip? EkipBul(string? ad)
     {
+        // Önce [E012] kodu: model adı bozsa bile kod doğruysa eşleşir
+        if (ad is not null && KodDeseni.Match(ad) is { Success: true } km)
+        {
+            var no = int.Parse(km.Groups[1].Value);
+            if (no >= 1 && no <= Ekipler.Count) return Ekipler[no - 1];
+            ad = ad[km.Length..];
+        }
         var n = Metin.Normalize(ad);
         if (n.Length < 2) return null;
 
@@ -532,9 +582,40 @@ static class ExcelIslemleri
         };
     }
 
+    /// Metinle sorulan işler için: İş / Ekipler / Gerekçe kolonlu yeni bir dosya üretir.
+    static byte[] MetinSonucuYaz(AnalizIsi analiz, ExcelAyarlari ayar)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.AddWorksheet("Sonuç");
+        var basliklar = new[] { "No", "İş", ayar.CiktiEkipBasligi, ayar.CiktiGerekceBasligi };
+        for (int i = 0; i < basliklar.Length; i++)
+        {
+            var h = ws.Cell(1, i + 1);
+            h.Value = basliklar[i];
+            h.Style.Font.Bold = true;
+            h.Style.Fill.BackgroundColor = XLColor.FromHtml("#DDEBF7");
+        }
+        int r = 2;
+        foreach (var s in analiz.Kontrol.Satirlar)
+        {
+            ws.Cell(r, 1).Value = s.Sira;
+            ws.Cell(r, 2).Value = s.Aksiyon;
+            ws.Cell(r, 3).Value = s.EkipMetni();
+            ws.Cell(r, 4).Value = s.GerekceMetni();
+            r++;
+        }
+        ws.Column(1).Width = 6; ws.Column(2).Width = 60; ws.Column(3).Width = 70; ws.Column(4).Width = 80;
+        ws.Range(2, 1, Math.Max(2, r - 1), 4).Style.Alignment.WrapText = true;
+        ws.Range(2, 1, Math.Max(2, r - 1), 4).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+        using var cikti = new MemoryStream();
+        wb.SaveAs(cikti);
+        return cikti.ToArray();
+    }
+
     /// Yüklenen orijinal dosyaya iki sonuç kolonunu ekleyip döner; diğer hücrelere dokunmaz.
     public static byte[] SonucYaz(AnalizIsi analiz, ExcelAyarlari ayar)
     {
+        if (analiz.KontrolBytes is null) return MetinSonucuYaz(analiz, ayar);
         using var wb = new XLWorkbook(new MemoryStream(analiz.KontrolBytes));
         var k = analiz.Kontrol;
         var ws = wb.Worksheet(k.SayfaAdi);
@@ -576,7 +657,7 @@ static class PromptOlusturucu
     public const string Sistem =
         "Sen bir bankanın BT organizasyonunu, servis kataloğunu ve yapay zeka yönetişimini (NIST AI RMF, ISO/IEC 42001, BDDK düzenlemeleri) " +
         "iyi bilen kıdemli bir süreç ve yönetişim analistisin. Görevin, yapay zeka geliştirme sürecine ait aksiyon/kontrol maddelerini " +
-        "kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen satır formatında, Türkçe yanıt verirsin.";
+        "veya kullanıcının anlattığı işleri kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen satır formatında, Türkçe yanıt verirsin.";
 
     public static string Olustur(KontrolSatiri s, Katalog katalog, List<Ekip> adaylar, YzAyarlari ayar)
     {
@@ -589,18 +670,18 @@ static class PromptOlusturucu
         if (tumu)
         {
             // Katalog her satırda aynı sırayla en başta gider; sunucu önbelleği (prefix cache) varsa hızlanır
-            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet) VE SAHİBİ OLDUKLARI SERVİSLER. EKİP ADLARINI YALNIZCA ### BAŞLIKLARINDAN, YAZILDIĞI GİBİ SEÇ:");
+            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet) VE SAHİBİ OLDUKLARI SERVİSLER. EKİPLERİ YALNIZCA ### BAŞLIKLARINDAN, KODUYLA BİRLİKTE SEÇ:");
         }
         else
         {
-            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet). EKİP ADLARINI YALNIZCA BU LİSTEDEN, YAZILDIĞI GİBİ SEÇ:");
-            foreach (var e in katalog.Ekipler) sb.AppendLine($"- {e.Ad}");
+            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet). EKİPLERİ YALNIZCA BU LİSTEDEN, KODUYLA BİRLİKTE SEÇ:");
+            foreach (var e in katalog.Ekipler) sb.AppendLine($"- {e.Etiket}");
             sb.AppendLine();
             sb.AppendLine($"EN OLASI {adaylar.Count} ADAY EKİBİN SAHİBİ OLDUĞU SERVİSLER (anahtar kelime benzerliğiyle otomatik seçildi; doğru ekip burada yoksa yukarıdaki tüm ekip listesinden seç):");
         }
         foreach (var e in adaylar)
         {
-            sb.AppendLine($"### {e.Ad}");
+            sb.AppendLine($"### {e.Etiket}");
             var servisler = tumu ? e.Servisler : katalog.IlgiliServisler(e, q);
             foreach (var sv in servisler.Take(servisSiniri))
                 sb.AppendLine(ayar.ServisAciklamasiGonder && sv.Aciklama.Length > 0
@@ -611,9 +692,17 @@ static class PromptOlusturucu
         }
         sb.AppendLine();
 
-        sb.AppendLine("DEĞERLENDİRİLECEK MADDE:");
-        if (s.AltKategori.Length > 0) sb.AppendLine($"- Alt Kategori: {s.AltKategori}");
-        sb.AppendLine($"- AKSİYON / KONTROL: {s.Aksiyon}");
+        if (s.Serbest)
+        {
+            sb.AppendLine("KULLANICININ ANLATTIĞI, YAPILMASI GEREKEN İŞ:");
+            sb.AppendLine(s.Aksiyon);
+        }
+        else
+        {
+            sb.AppendLine("DEĞERLENDİRİLECEK MADDE:");
+            if (s.AltKategori.Length > 0) sb.AppendLine($"- Alt Kategori: {s.AltKategori}");
+            sb.AppendLine($"- AKSİYON / KONTROL: {s.Aksiyon}");
+        }
         foreach (var a in s.Alanlar) sb.AppendLine($"- {a.Key}: {a.Value}");
         sb.AppendLine();
 
@@ -627,15 +716,17 @@ static class PromptOlusturucu
 
         sb.AppendLine($@"KURALLAR:
 1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı bu işe uyan ekibi seç.
-2. Ekip adlarını yukarıdaki TÜM EKİPLER listesinde yazıldığı gibi AYNEN yaz. Listede olmayan ekip adı UYDURMA.
+2. YALNIZCA yukarıdaki listede [E...] koduyla verilen ekipleri seçebilirsin. Her ekibi KODU VE ADIYLA, listede yazıldığı gibi AYNEN yaz (örn: [E001] ...).
+   Listede olmayan birim, müdürlük, komite, ofis veya ekip adı UYDURMA; kendi bildiğin genel birim adlarını (""Risk Yönetimi"", ""YZ Ofisi"", ""Hukuk"" vb.) listede yoksa ASLA yazma. Listede olmayan ad yazılan yanıt GEÇERSİZ sayılır.
+   İşi birebir karşılayan ekip yoksa görev alanı en yakın olan listedeki ekibi seç ve GUVEN değerini düşür.
 3. En az 1, en fazla {ayar.MaksEkipSayisi} ekip seç. İlk ekibin rolü ""Sorumlu"" (işin sahibi), diğerlerinin rolü ""Destek"" olsun. Gereksiz yere ekip ekleme.
 4. Her ekip için bu maddede somut olarak NE YAPACAĞINI 1-2 cümleyle yaz (örn: ""Atama yazısını hazırlar ve süreç sahibini belirler"").
 5. Kullanıcının ön görüşüne körü körüne uyma. Servis kataloğuyla uyumluysa destekleyici kanıt olarak kullan; uyumsuzsa gerekçede nedenini kısaca belirt.
 6. Gerekçede kararı hangi servis(ler)e veya ekibin hangi görev alanına dayanarak verdiğini açıkça yaz (2-4 cümle).
 7. GUVEN 0-100 arası bir sayıdır. Katalogda bu işi açıkça kapsayan bir servis yoksa 60'ın altında ver.
 8. ÇIKTI FORMATI: Yanıtına KESİNLİKLE aşağıdaki satırlarla başla. JSON, tablo, markdown veya başka açıklama KULLANMA. Her ekip için ayrı bir EKIP satırı yaz; alanları | ile ayır.
-EKIP: <listeden ekip adı> | Sorumlu | <bu ekibin bu maddede ne yapacağı>
-EKIP: <listeden ekip adı> | Destek | <bu ekibin bu maddede ne yapacağı>
+EKIP: [E...] <listedeki ekip adı> | Sorumlu | <bu ekibin bu maddede ne yapacağı>
+EKIP: [E...] <listedeki ekip adı> | Destek | <bu ekibin bu maddede ne yapacağı>
 GUVEN: %<0-100>
 GEREKCE: <kararı nasıl verdiğin, 2-4 cümle>");
 
@@ -774,22 +865,94 @@ static class CevapAyristirici
 // İŞ YÖNETİMİ (arka planda paralel model çağrıları)
 // =====================================================================
 
-class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log)
+class IsYoneticisi
 {
+    readonly YzAyarlari ayar;
+    readonly ExcelAyarlari excelAyar;
+    readonly IHttpClientFactory httpFactory;
+    readonly ILogger<IsYoneticisi> log;
     readonly ConcurrentDictionary<string, AnalizIsi> isler = new();
 
-    public AnalizIsi Baslat(byte[] kontrolBytes, string dosyaAdi, byte[] katalogBytes)
+    // Son yüklenen katalog diske de yazılır; uygulama yeniden başlasa da tekrar yüklemek gerekmez
+    readonly string katalogYolu, katalogAdYolu;
+    Katalog? katalog;
+    string katalogAdi = "";
+    DateTime katalogZamani;
+
+    public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env)
+    {
+        (this.ayar, this.excelAyar, this.httpFactory, this.log) = (ayar, excelAyar, httpFactory, log);
+        var klasor = Path.Combine(env.ContentRootPath, "veri");
+        katalogYolu = Path.Combine(klasor, "son_katalog.xlsx");
+        katalogAdYolu = Path.Combine(klasor, "son_katalog_adi.txt");
+        if (File.Exists(katalogYolu))
+        {
+            try
+            {
+                katalog = ExcelIslemleri.KatalogOku(File.ReadAllBytes(katalogYolu), excelAyar);
+                katalogAdi = File.Exists(katalogAdYolu) ? File.ReadAllText(katalogAdYolu).Trim() : "son_katalog.xlsx";
+                katalogZamani = File.GetLastWriteTime(katalogYolu);
+            }
+            catch (Exception ex) { log.LogWarning("Kayıtlı katalog okunamadı: {Hata}", ex.Message); }
+        }
+    }
+
+    public object KatalogBilgisi() => katalog is null
+        ? new { var = false }
+        : new
+        {
+            var = true,
+            dosyaAdi = katalogAdi,
+            yuklenme = katalogZamani,
+            ekipSayisi = katalog.Ekipler.Count,
+            servisSayisi = katalog.Ekipler.Sum(e => e.Servisler.Count),
+            aciklamaliServis = katalog.Ekipler.Sum(e => e.Servisler.Count(sv => sv.Aciklama.Length > 0))
+        };
+
+    public void KatalogYukle(byte[] bytes, string dosyaAdi)
+    {
+        var yeni = ExcelIslemleri.KatalogOku(bytes, excelAyar);
+        (katalog, katalogAdi, katalogZamani) = (yeni, dosyaAdi, DateTime.Now);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(katalogYolu)!);
+            File.WriteAllBytes(katalogYolu, bytes);
+            File.WriteAllText(katalogAdYolu, dosyaAdi);
+        }
+        catch (Exception ex) { log.LogWarning("Katalog diske yazılamadı: {Hata}", ex.Message); }
+    }
+
+    Katalog AktifKatalog() => katalog ?? throw new ExcelOkumaHatasi("Önce servis kataloğu Excel dosyasını yükleyin.");
+
+    public AnalizIsi ExcelIleBaslat(byte[] kontrolBytes, string dosyaAdi) => Baslat(new AnalizIsi
+    {
+        DosyaAdi = dosyaAdi,
+        KontrolBytes = kontrolBytes,
+        Kontrol = ExcelIslemleri.KontrolOku(kontrolBytes, excelAyar),
+        Katalog = AktifKatalog()
+    });
+
+    public AnalizIsi MetinleBaslat(string metin, bool herSatirAyriMadde)
+    {
+        var maddeler = (herSatirAyriMadde
+                ? metin.Split('\n').Select(m => Regex.Replace(m, @"^\s*(\d+[.)-]|[-*•])\s*", "").Trim())
+                : [metin.Trim()])
+            .Where(m => m.Length > 0).ToList();
+        if (maddeler.Count == 0) throw new ExcelOkumaHatasi("Yapılacak işi anlatan bir metin yazın.");
+
+        var satirlar = maddeler.Select((m, i) => new KontrolSatiri { Sira = i + 1, SatirNo = i + 1, Aksiyon = m, Serbest = true }).ToList();
+        return Baslat(new AnalizIsi
+        {
+            DosyaAdi = maddeler.Count == 1 ? "Metinle soru" : $"Metinle soru ({maddeler.Count} madde)",
+            Kontrol = new KontrolDosyasi { SayfaAdi = "Sonuç", Satirlar = satirlar },
+            Katalog = AktifKatalog()
+        });
+    }
+
+    AnalizIsi Baslat(AnalizIsi analiz)
     {
         foreach (var eski in isler.Values.Where(i => i.Baslangic < DateTime.Now.AddHours(-12)))
             isler.TryRemove(eski.Id, out _);
-
-        var analiz = new AnalizIsi
-        {
-            DosyaAdi = dosyaAdi,
-            KontrolBytes = kontrolBytes,
-            Kontrol = ExcelIslemleri.KontrolOku(kontrolBytes, excelAyar),
-            Katalog = ExcelIslemleri.KatalogOku(katalogBytes, excelAyar)
-        };
         isler[analiz.Id] = analiz;
         log.LogInformation("İş {Id} başladı: {Satir} madde, {Ekip} ekip", analiz.Id, analiz.Kontrol.Satirlar.Count, analiz.Katalog.Ekipler.Count);
         _ = Task.Run(() => CalistirAsync(analiz));
@@ -852,8 +1015,34 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
                 s.HamCevap = ham;
                 if (CevapAyristirici.Ayristir(ham, katalog) is { } karar)
                 {
-                    s.Ekipler = karar.ekipler;
-                    s.Gerekce = karar.gerekce;
+                    var uydurma = karar.ekipler.Where(e => !e.KatalogdaVar).Select(e => e.Ekip).ToList();
+                    bool sonDeneme = deneme >= Math.Max(1, ayar.DenemeSayisi);
+                    if (uydurma.Count > 0 && !sonDeneme)
+                    {
+                        // Katalogda olmayan birim adı: kabul etme, modelden düzeltmesini iste
+                        log.LogWarning("Satır {Satir} deneme {Deneme}: katalogda olmayan ekip(ler): {Ekipler}", s.SatirNo, deneme, string.Join(", ", uydurma));
+                        sonHata = $"Model katalogda olmayan ekip önerdi: {string.Join(", ", uydurma)}";
+                        mesajlar.Add(new("assistant", CevapAyristirici.Temizle(ham)));
+                        mesajlar.Add(new("user",
+                            $"Şu ekipler katalogda YOK, bunları kullanamazsın: {string.Join(", ", uydurma.Select(u => $"\"{u}\""))}. " +
+                            "Bunların yerine YALNIZCA listede [E...] koduyla verilen ekiplerden görev alanı en uygun olanı seç. " +
+                            "Yanıtını aynı biçimde (EKIP: [E...] ad | rol | görev, GUVEN, GEREKCE) baştan yaz."));
+                        continue;
+                    }
+
+                    var gecerli = karar.ekipler.Where(e => e.KatalogdaVar).ToList();
+                    if (gecerli.Count == 0)
+                    {
+                        sonHata = $"Model yalnızca katalogda olmayan ekipler önerdi: {string.Join(", ", uydurma)}";
+                        break;
+                    }
+                    // Sorumlu çıkarıldıysa ilk kalan ekip sorumlu olur
+                    if (!gecerli.Any(e => e.Rol == "Sorumlu")) gecerli[0] = gecerli[0] with { Rol = "Sorumlu" };
+                    if (uydurma.Count > 0)
+                        karar.gerekce += $" (Not: katalogda bulunmayan {string.Join(", ", uydurma.Select(u => $"'{u}'"))} önerisi çıkarıldı.)";
+
+                    s.Ekipler = gecerli;
+                    s.Gerekce = karar.gerekce.Trim();
                     s.Guven = karar.guven;
                     s.Uyum = UyumHesapla(katalog, s);
                     s.Durum = "Tamam";
@@ -869,7 +1058,7 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
                 if (temiz.Length > 0)
                 {
                     mesajlar.Add(new("assistant", temiz));
-                    mesajlar.Add(new("user", "Yanıtın istenen biçimde değildi. Hiçbir açıklama eklemeden yalnızca şu satırları yaz:\nEKIP: <listeden ekip adı> | Sorumlu | <ne yapacak>\nGUVEN: %<0-100>\nGEREKCE: <kısa gerekçe>"));
+                    mesajlar.Add(new("user", "Yanıtın istenen biçimde değildi. Hiçbir açıklama eklemeden yalnızca şu satırları yaz:\nEKIP: [E...] <listedeki ekip adı> | Sorumlu | <ne yapacak>\nGUVEN: %<0-100>\nGEREKCE: <kısa gerekçe>"));
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

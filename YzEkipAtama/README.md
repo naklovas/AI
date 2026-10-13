@@ -33,6 +33,18 @@ Uygulama `http://localhost:5080` adresinde açılır.
 | `DenemeSayisi` | Hata alındığında veya yanıt ayrıştırılamadığında toplam deneme sayısı |
 | `ExcelAyarlari:KullaniciEkipKolonu / KullaniciNotKolonu` | Sizin doldurduğunuz E ve F kolonları. Bu kolonlar modele **yalnızca ipucu** olarak gider. |
 
+## Kullanım
+
+- **Servis kataloğu** bir kez yüklenir. Uygulama `veri/son_katalog.xlsx` dosyasında saklar; uygulama yeniden başlasa da tekrar yüklemek gerekmez. Yeni bir dosya yüklenene kadar bu katalog kullanılır.
+- **Metinle sor** sekmesine yapılacak işi yazıp **Ekipleri Bul**'a basın. Sorumlu ve destek ekipler, her birinin görevi ve karar gerekçesi gösterilir. "Her satırı ayrı bir iş olarak değerlendir" seçiliyse her satır ayrı bir madde olur; baştaki `1.`, `-` gibi işaretler atılır. Sonuçlar gridde listelenir ve Excel olarak indirilebilir.
+- **Excel ile toplu** sekmesinde kontrol listesi yüklenir ve bütün maddeler işlenir.
+
+## Uydurma ekip adına karşı önlemler
+
+- Her ekibe prompt'ta `[E012]` gibi bir kod verilir. Modelden ekibi koduyla birlikte yazması istenir. Ad hatalı yazılsa da kod doğruysa eşleşme yapılır.
+- Model katalogda olmayan bir birim adı yazarsa yanıt kabul edilmez. Geçersiz adlar modele bildirilip düzeltmesi istenir (`DenemeSayisi`, varsayılan 3).
+- Son denemede de uydurma ad varsa bu adlar sonuçtan çıkarılır ve gerekçeye not düşülür. Hiç geçerli ekip kalmazsa madde "Hata" olarak işaretlenir.
+
 ## Akış
 
 1. Kontrol listesi ve servis kataloğu Excel dosyaları yüklenir. Başlık satırı otomatik bulunur (Kontrol listesinde "Aksiyon/Kontrol", katalogda "Servis Adı", "Servis Sahibi Bölüm" ve varsa "Açıklama" başlıkları aranır). Birleştirilmiş hücreler desteklenir.
