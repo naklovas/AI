@@ -171,7 +171,7 @@ const dosyalar = { kontrol: null, katalog: null };
 
 // ---------- ayarlar ----------
 fetch('/api/ayarlar').then(r => r.json()).then(a => {
-  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Aday ekip: ${a.adayEkipSayisi || 'tümü'} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 
@@ -383,7 +383,7 @@ function detayAc(sira) {
     ${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span> <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || '—'}
     <h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce) || '—'}</div>
     ${s.hata ? `<h3>Hata</h3><div class="hata">${esc(s.hata)}</div>` : ''}
-    <h3>Ön elemede modele detaylı gönderilen aday ekipler (${s.adaylar.length})</h3><div class="muted">${s.adaylar.map(esc).join(' · ') || '—'}</div>
+    <h3>Modele servis listesiyle gönderilen ekipler (${s.adaylar.length})</h3><div class="muted">${s.adaylar.map(esc).join(' · ') || '—'}</div>
     <h3>Modelin ham yanıtı</h3><pre>${esc(s.hamCevap) || '—'}</pre>`;
   $('#detay').showModal();
 }

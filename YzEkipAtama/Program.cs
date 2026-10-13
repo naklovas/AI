@@ -35,6 +35,7 @@ app.MapGet("/api/ayarlar", (YzAyarlari a, ExcelAyarlari e) => new
 {
     model = a.AiModel,
     paralellik = a.Paralellik,
+    onElemeYap = a.OnElemeYap,
     adayEkipSayisi = a.AdayEkipSayisi,
     maksEkipSayisi = a.MaksEkipSayisi,
     kullaniciEkipKolonu = e.KullaniciEkipKolonu,
@@ -103,13 +104,14 @@ class YzAyarlari
     public string QwenApiKey { get; set; } = "";
     public string AiModel { get; set; } = "zt-ga-small-0";
     public double Temperature { get; set; } = 0.1;
-    public int MaksToken { get; set; } = 3000;
+    public int MaksToken { get; set; } = 8000;
     public bool JsonModu { get; set; }
     public bool DusunmeyiKapat { get; set; }
-    public int ZamanAsimiDakika { get; set; } = 3;
+    public int ZamanAsimiDakika { get; set; } = 5;
     public bool SertifikaDogrulamasiniAtla { get; set; } = true;
     public int Paralellik { get; set; } = 3;
     public int DenemeSayisi { get; set; } = 2;
+    public bool OnElemeYap { get; set; }
     public int AdayEkipSayisi { get; set; } = 20;
     public int EkipBasinaServisSayisi { get; set; } = 12;
     public int MaksEkipSayisi { get; set; } = 3;
@@ -557,28 +559,36 @@ static class PromptOlusturucu
     public const string Sistem =
         "Sen bir bankanın BT organizasyonunu, servis kataloğunu ve yapay zeka yönetişimini (NIST AI RMF, ISO/IEC 42001, BDDK düzenlemeleri) " +
         "iyi bilen kıdemli bir süreç ve yönetişim analistisin. Görevin, yapay zeka geliştirme sürecine ait aksiyon/kontrol maddelerini " +
-        "kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen JSON formatında, Türkçe yanıt verirsin.";
+        "kurumun servis kataloğuna bakarak işi fiilen yapması gereken ekiplere atamaktır. Yalnızca istenen satır formatında, Türkçe yanıt verirsin.";
 
     public static string Olustur(KontrolSatiri s, Katalog katalog, List<Ekip> adaylar, YzAyarlari ayar)
     {
         var sb = new StringBuilder();
         var q = katalog.Sorgu(s);
         bool tumu = adaylar.Count >= katalog.Ekipler.Count;
+        // Ön eleme kapalıysa servis kırpılmaz; açıkken 0 da "tüm servisler" demektir
+        int servisSiniri = !ayar.OnElemeYap || ayar.EkipBasinaServisSayisi <= 0 ? int.MaxValue : ayar.EkipBasinaServisSayisi;
 
-        sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet). EKİP ADLARINI YALNIZCA BU LİSTEDEN, YAZILDIĞI GİBİ SEÇ:");
-        foreach (var e in katalog.Ekipler) sb.AppendLine($"- {e.Ad}");
-        sb.AppendLine();
-
-        sb.AppendLine(tumu
-            ? "EKİPLERİN SAHİBİ OLDUĞU SERVİSLER (servis kataloğu):"
-            : $"EN OLASI {adaylar.Count} ADAY EKİBİN SAHİBİ OLDUĞU SERVİSLER (anahtar kelime benzerliğiyle otomatik seçildi; doğru ekip burada yoksa yukarıdaki tüm ekip listesinden seç):");
+        if (tumu)
+        {
+            // Katalog her satırda aynı sırayla en başta gider; sunucu önbelleği (prefix cache) varsa hızlanır
+            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet) VE SAHİBİ OLDUKLARI SERVİSLER. EKİP ADLARINI YALNIZCA ### BAŞLIKLARINDAN, YAZILDIĞI GİBİ SEÇ:");
+        }
+        else
+        {
+            sb.AppendLine($"KURUMDAKİ TÜM EKİPLER ({katalog.Ekipler.Count} adet). EKİP ADLARINI YALNIZCA BU LİSTEDEN, YAZILDIĞI GİBİ SEÇ:");
+            foreach (var e in katalog.Ekipler) sb.AppendLine($"- {e.Ad}");
+            sb.AppendLine();
+            sb.AppendLine($"EN OLASI {adaylar.Count} ADAY EKİBİN SAHİBİ OLDUĞU SERVİSLER (anahtar kelime benzerliğiyle otomatik seçildi; doğru ekip burada yoksa yukarıdaki tüm ekip listesinden seç):");
+        }
         foreach (var e in adaylar)
         {
             sb.AppendLine($"### {e.Ad}");
-            foreach (var sv in katalog.IlgiliServisler(e, q).Take(ayar.EkipBasinaServisSayisi))
+            var servisler = tumu ? e.Servisler : katalog.IlgiliServisler(e, q);
+            foreach (var sv in servisler.Take(servisSiniri))
                 sb.AppendLine($"  - {sv.Ad}");
-            if (e.Servisler.Count > ayar.EkipBasinaServisSayisi)
-                sb.AppendLine($"  - ... (+{e.Servisler.Count - ayar.EkipBasinaServisSayisi} servis daha)");
+            if (e.Servisler.Count > servisSiniri)
+                sb.AppendLine($"  - ... (+{e.Servisler.Count - servisSiniri} servis daha)");
         }
         sb.AppendLine();
 
@@ -805,10 +815,13 @@ class IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory 
         s.Durum = "İşleniyor";
         s.Hata = "";
         var katalog = analiz.Katalog;
-        var adaylar = katalog.AdaylariSec(s, ayar.AdayEkipSayisi);
+        var adaylar = ayar.OnElemeYap ? katalog.AdaylariSec(s, ayar.AdayEkipSayisi) : katalog.Ekipler;
         s.Adaylar = adaylar.Select(a => a.Ad).ToList();
 
-        var mesajlar = new List<Mesaj> { new("system", PromptOlusturucu.Sistem), new("user", PromptOlusturucu.Olustur(s, katalog, adaylar, ayar)) };
+        var kullaniciMesaji = PromptOlusturucu.Olustur(s, katalog, adaylar, ayar);
+        // Qwen3'ün "yumuşak" düşünme kapatma komutu; chat_template_kwargs'ı tanımayan sunucularda da işe yarar
+        if (ayar.DusunmeyiKapat) kullaniciMesaji += "\n/no_think";
+        var mesajlar = new List<Mesaj> { new("system", PromptOlusturucu.Sistem), new("user", kullaniciMesaji) };
         string sonHata = "";
 
         for (int deneme = 1; deneme <= Math.Max(1, ayar.DenemeSayisi); deneme++)

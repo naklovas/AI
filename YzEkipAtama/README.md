@@ -24,7 +24,8 @@ Uygulama `http://localhost:5080` adresinde açılır.
 |---|---|
 | `AiModel` | Model adı (varsayılan `zt-ga-small-0`) |
 | `Paralellik` | Aynı anda modele gönderilen madde sayısı |
-| `AdayEkipSayisi` | Prompt'a servis listesiyle birlikte konulan en olası ekip sayısı. Ekiplerin yalnızca **adları** her zaman eksiksiz gönderilir. `0` verilirse bütün ekipler tüm servisleriyle gönderilir (modelin bağlam penceresi büyükse kullanın). |
+| `OnElemeYap` | `false` (varsayılan): her maddede 114 ekibin tamamı tüm servisleriyle gönderilir. `true`: anahtar kelime benzerliğiyle `AdayEkipSayisi` kadar ekip, en ilgili `EkipBasinaServisSayisi` servisiyle gönderilir (ekip adlarının tamamı yine de gider). |
+| `MaksToken` | Yanıt için token sınırı; düşünen modellerde `<think>` bölümü de buna dahildir. `0` = sınır yok. |
 | `EkipBasinaServisSayisi` | Her aday ekip için gönderilen servis sayısı. Maddeyle en ilgili servisler önce gelir. |
 | `MaksEkipSayisi` | Bir madde için önerilebilecek en fazla ekip sayısı (ilk ekip "Sorumlu", diğerleri "Destek") |
 | `DusunmeyiKapat` | Qwen3 gibi düşünen modellerde `<think>` bölümünü kapatır (`chat_template_kwargs.enable_thinking=false`). Sunucu tanımazsa `false` yapın. |
