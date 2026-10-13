@@ -79,7 +79,9 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 pre{white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;max-height:260px;overflow:auto}
 .uyari{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:12px}
 .gizli{display:none!important}
-.dosyalar{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.dosyalar{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.toplu{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center}
+@media (max-width:900px){.toplu{grid-template-columns:1fr}}
 .dosya{display:flex;flex-direction:column;gap:8px;min-width:0}
 .dosya .katalog-durum{font-size:12.5px}
 .etiket{font-weight:500;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px;margin-left:4px}
@@ -125,19 +127,24 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
         </label>
         <div class="katalog-durum" id="prosedurDurum"></div>
       </div>
-      <div class="dosya">
-        <label class="drop" id="dropKontrol">
-          <b>3 · Kontrol listesi <span class="etiket">varsa</span></b>
-          <span id="adKontrol">Aksiyon / Kontrol maddeleri (.xlsx)</span>
-          <input type="file" accept=".xlsx" id="fKontrol">
-        </label>
-        <div class="katalog-durum">
-          <button class="primary" id="btnBaslat" disabled>Kontrol Listesini Analiz Et</button>
-          <div class="muted" style="font-size:12px;margin-top:6px">Kontrol listesi yoksa aşağıdan işi yazarak sorabilirsiniz.</div>
-        </div>
-      </div>
     </div>
     <div id="katalogHata" class="hata" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card">
+    <b style="display:block;margin-bottom:10px">Toplu analiz · Kontrol listesi</b>
+    <div class="toplu">
+      <label class="drop" id="dropKontrol">
+        <b>Kontrol listesi (.xlsx)</b>
+        <span id="adKontrol">Aksiyon / Kontrol maddelerinin olduğu dosya. Tıkla veya sürükle bırak.</span>
+        <input type="file" accept=".xlsx" id="fKontrol">
+      </label>
+      <div>
+        <button class="primary" id="btnBaslat">Kontrol listesi seç…</button>
+        <div class="muted" style="font-size:12px;margin-top:6px" id="topluBilgi">Dosyadaki bütün maddeler (hücre içindeki alt maddeler dahil) tek tek analiz edilir.</div>
+      </div>
+    </div>
+    <div id="topluHata" class="hata" style="margin-top:8px"></div>
   </section>
 
   <section class="card">
@@ -292,12 +299,13 @@ dropBagla('#dropKontrol', '#fKontrol', f => {
   kontrolDosya = f; $('#adKontrol').textContent = f.name; $('#dropKontrol').classList.add('dolu'); butonlariGuncelle();
 });
 function butonlariGuncelle() {
-  $('#btnBaslat').disabled = !(kontrolDosya && katalogVar);
+  // Toplu analiz düğmesi her zaman tıklanabilir: dosya yoksa dosya seçtirir, katalog yoksa uyarır
+  $('#btnBaslat').textContent = kontrolDosya ? `Analizi Başlat (${kontrolDosya.name})` : 'Kontrol listesi seç…';
   $('#btnSor').disabled = !katalogVar;
 }
 
 async function isBaslat(istek, hataAlani = '#yuklemeHata') {
-  $('#yuklemeHata').textContent = ''; $('#katalogHata').textContent = '';
+  ['#yuklemeHata', '#katalogHata', '#topluHata'].forEach(id => $(id).textContent = '');
   try {
     const r = await fetch(istek.url, istek.opts);
     const j = await r.json();
@@ -313,10 +321,14 @@ async function isBaslat(istek, hataAlani = '#yuklemeHata') {
 }
 
 $('#btnBaslat').addEventListener('click', async () => {
+  $('#topluHata').textContent = '';
+  if (!katalogVar) { $('#topluHata').textContent = 'Önce yukarıdan servis kataloğunu yükleyin.'; return; }
+  if (!kontrolDosya) { $('#fKontrol').click(); return; }
   $('#btnBaslat').disabled = true;
   const fd = new FormData();
   fd.append('kontrol', kontrolDosya);
-  await isBaslat({ url: '/api/is', opts: { method: 'POST', body: fd } }, '#katalogHata');
+  await isBaslat({ url: '/api/is', opts: { method: 'POST', body: fd } }, '#topluHata');
+  $('#btnBaslat').disabled = false;
   butonlariGuncelle();
 });
 
