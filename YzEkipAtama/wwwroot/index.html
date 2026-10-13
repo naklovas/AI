@@ -227,7 +227,7 @@ function katalogGoster(k) {
   katalogVar = !!k.var;
   $('#katalogDurum').innerHTML = k.var
     ? `Aktif katalog: <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}` +
-      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '')
+      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '')
     : '<span class="hata">Henüz katalog yüklenmedi. Önce servis kataloğunu yükleyin.</span>';
   $('#dropKatalog').classList.toggle('dolu', katalogVar);
   butonlariGuncelle();

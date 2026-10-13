@@ -190,10 +190,10 @@ class YzAyarlari
     public List<string>? EkKurallar { get; set; }
     public List<string> Kurallar() => EkKurallar ??
     [
-        "İş birimlerinden gelen taleplerin alınması ve yönetimi Pergel uygulaması üzerinden {PROJE YÖNETİMİ OFİSİ} tarafından yürütülür. " +
+        "İş birimlerinden gelen taleplerin alınması ve yönetimi Pergel uygulaması üzerinden {STRATEJİK PLANLAMA ve KOORDİNASYON} tarafından yürütülür. " +
         "Bu nedenle talep yönetimi, kapsamın belirlenmesi ve kapsam değişiklikleri, paydaşların belirlenmesi ve sürece dahil edilmesi, " +
-        "paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama) konularının geneli {PROJE YÖNETİMİ OFİSİ} sorumluluğundadır; " +
-        "bu maddelerde Sorumlu ekip {PROJE YÖNETİMİ OFİSİ} olmalı, konunun uzmanı ekipler gerekiyorsa Destek olarak eklenmelidir."
+        "paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama) konularının geneli {STRATEJİK PLANLAMA ve KOORDİNASYON} sorumluluğundadır; " +
+        "bu maddelerde Sorumlu ekip {STRATEJİK PLANLAMA ve KOORDİNASYON} olmalı, konunun uzmanı ekipler gerekiyorsa Destek olarak eklenmelidir."
     ];
 }
 
@@ -217,8 +217,12 @@ class ExcelAyarlari
     [
         new EkEkip
         {
-            Ad = "PROJE YÖNETİMİ OFİSİ",
-            Aciklama = "Kurum genelinde proje yönetimi ofisi (PMO): iş birimlerinden gelen taleplerin Pergel uygulaması üzerinden alınması, değerlendirilmesi ve takibi (talep yönetimi); proje başlatma ve onay süreçleri, kapsam yönetimi ve kapsam değişiklikleri, paydaşların belirlenmesi ve sürece dahil edilmesi, paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama), proje planlama, kaynak ve bütçe takibi, proje portföy yönetimi, proje yönetişimi, kilometre taşı ve risk takibi, proje durum raporlaması, ekip görevlendirme koordinasyonu."
+            Ad = "STRATEJİK PLANLAMA ve KOORDİNASYON",
+            Aciklama = "Kurumun proje yönetimi ofisi (PMO) işlevi bu birimdedir: iş birimlerinden gelen taleplerin Pergel uygulaması üzerinden alınması, " +
+                       "değerlendirilmesi ve takibi (talep yönetimi); proje başlatma ve onay süreçleri, kapsam yönetimi ve kapsam değişiklikleri, " +
+                       "paydaşların belirlenmesi ve sürece dahil edilmesi, paydaş ve proje iletişimi (bilgilendirme, toplantı, raporlama), " +
+                       "proje/program planlama, kaynak ve bütçe takibi, proje portföy yönetimi, proje yönetişimi, kilometre taşı ve risk takibi, " +
+                       "proje durum raporlaması, ekip görevlendirme koordinasyonu."
         }
     ];
 }
@@ -942,7 +946,7 @@ static class PromptOlusturucu
         var kurallar = ayar.Kurallar().Where(k => !string.IsNullOrWhiteSpace(k))
             .Select(k => Regex.Replace(k, @"\{([^{}]+)\}", m => katalog.EkipBul(m.Groups[1].Value)?.Etiket ?? m.Groups[1].Value))
             .ToList();
-        return kurallar.Count == 0 ? "" : "\n1b. KURUM KURALLARI (bu kurallar katalogdaki servis adlarından ÖNCELİKLİDİR):" +
+        return kurallar.Count == 0 ? "" : "\n1d. KURUM KURALLARI (bu kurallar katalogdaki servis adlarından ÖNCELİKLİDİR):" +
             string.Concat(kurallar.Select(k => "\n    - " + k));
     }
 
@@ -1023,7 +1027,10 @@ static class PromptOlusturucu
         sb.AppendLine($@"KURALLAR:
 1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı bu işe uyan ekibi seç.
 1a. İSİM BENZERLİĞİ TUZAĞI (ÇOK KRİTİK): Bu maddelerin TAMAMI zaten yapay zeka geliştirme sürecine aittir. Bu yüzden maddede ""yapay zeka"", ""YZ"", ""model"" geçmesi veya ekip adında ""Yapay Zeka"" bulunması, işi o ekibe vermek için TEK BAŞINA SEBEP DEĞİLDİR.
-    Ekibi işin TÜRÜNE göre seç: ekip görevlendirme/organizasyon/süreç tanımlama, proje planlama ve takip, bilgi güvenliği ve sızma testi, kişisel veri/KVKK, hukuk/uyum, risk, altyapı/sunucu, değişiklik ve sürüm yönetimi, eğitim, satın alma gibi işler bu görev alanlarına sahip ekiplere aittir.{GenelEkipKurali(katalog, ayar)}{KurumKurallari(katalog, ayar)}
+    Ekibi işin TÜRÜNE göre seç: ekip görevlendirme/organizasyon/süreç tanımlama, proje planlama ve takip, bilgi güvenliği ve sızma testi, kişisel veri/KVKK, hukuk/uyum, risk, altyapı/sunucu, değişiklik ve sürüm yönetimi, eğitim, satın alma gibi işler bu görev alanlarına sahip ekiplere aittir.{GenelEkipKurali(katalog, ayar)}
+1c. MEVCUT SÜREÇ ÖNCELİĞİ (ÇOK KRİTİK): Önce maddedeki FAALİYETİ belirle (talep, kapsam, paydaş, iletişim, değişiklik, test, güvenlik, veri koruma, envanter, eğitim, satın alma, raporlama vb.).
+    Bu faaliyet kurumda zaten bir servis{(prosedurVar ? " veya yukarıdaki prosedürlerden biri" : "")} ile yürütülüyorsa SORUMLU, o servisin{(prosedurVar ? "/prosedürün" : "")} sahibi ekiptir. Kontrol maddesi bu mevcut süreç içinde değerlendirilir; işin yapay zeka ile ilgili olması onu yeni veya farklı bir ekibe TAŞIMAZ.
+    YZ'ye özgü teknik katkı gerekiyorsa ilgili YZ ekibi yalnızca DESTEK olarak eklenir. Gerekçede hangi mevcut servise/sürece dayandığını yaz.{KurumKurallari(katalog, ayar)}
 2. YALNIZCA yukarıdaki listede [E...] koduyla verilen ekipleri seçebilirsin. Her ekibi KODU VE ADIYLA, listede yazıldığı gibi AYNEN yaz (örn: [E001] ...).
    Listede olmayan birim, müdürlük, komite, ofis veya ekip adı UYDURMA; kendi bildiğin genel birim adlarını (""Risk Yönetimi"", ""YZ Ofisi"", ""Hukuk"" vb.) listede yoksa ASLA yazma. Listede olmayan ad yazılan yanıt GEÇERSİZ sayılır.
    İşi birebir karşılayan ekip yoksa görev alanı en yakın olan listedeki ekibi seç ve GUVEN değerini düşür.
