@@ -79,12 +79,12 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 pre{white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;max-height:260px;overflow:auto}
 .uyari{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:12px}
 .gizli{display:none!important}
-.sekmeler{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px -16px 14px;padding:0 16px}
-.sekme{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 14px;color:var(--muted);font-weight:600}
-.sekme:hover{color:var(--text)}
-.sekme.aktif{color:var(--accent);border-bottom-color:var(--accent)}
-.katalog-satir{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-.katalog-satir .drop{flex:0 1 340px}
+.dosyalar{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.dosya{display:flex;flex-direction:column;gap:8px;min-width:0}
+.dosya .katalog-durum{font-size:12.5px}
+.etiket{font-weight:500;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px;margin-left:4px}
+.etiket.zorunlu{color:var(--accent);border-color:var(--accent)}
+@media (max-width:900px){.dosyalar{grid-template-columns:1fr}}
 .katalog-durum{color:var(--muted)}
 .katalog-durum b{color:var(--text)}
 .metin-alan{display:flex;flex-direction:column;gap:10px}
@@ -108,48 +108,46 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   <div class="uyari gizli" id="apiUyari">appsettings.json içinde <b>QwenApiUrl</b> tanımlı değil; model çağrıları hata verecek.</div>
 
   <section class="card">
-    <div class="katalog-satir">
-      <label class="drop" id="dropKatalog">
-        <b>Servis kataloğu (.xlsx)</b>
-        <span id="adKatalog">Yüklemek veya değiştirmek için tıkla ya da sürükle bırak.</span>
-        <input type="file" accept=".xlsx" id="fKatalog">
-      </label>
-      <div class="katalog-durum" id="katalogDurum">Katalog bilgisi okunuyor…</div>
-    </div>
-    <div class="katalog-satir" style="margin-top:12px">
-      <label class="drop" id="dropProsedur">
-        <b>Prosedür listesi (.xlsx) · isteğe bağlı</b>
-        <span id="adProsedur">Doküman Adı (D) ve Süreç Sahibi Birim (H) okunur. Tıkla veya sürükle bırak.</span>
-        <input type="file" accept=".xlsx" id="fProsedur">
-      </label>
-      <div class="katalog-durum" id="prosedurDurum"></div>
+    <div class="dosyalar">
+      <div class="dosya">
+        <label class="drop" id="dropKatalog">
+          <b>1 · Servis kataloğu <span class="etiket zorunlu">zorunlu</span></b>
+          <span id="adKatalog">Tıkla veya sürükle bırak (.xlsx)</span>
+          <input type="file" accept=".xlsx" id="fKatalog">
+        </label>
+        <div class="katalog-durum" id="katalogDurum">Katalog bilgisi okunuyor…</div>
+      </div>
+      <div class="dosya">
+        <label class="drop" id="dropProsedur">
+          <b>2 · Prosedür listesi <span class="etiket">isteğe bağlı</span></b>
+          <span id="adProsedur">Sistemden alındığı gibi yükleyin (.xlsx)</span>
+          <input type="file" accept=".xlsx" id="fProsedur">
+        </label>
+        <div class="katalog-durum" id="prosedurDurum"></div>
+      </div>
+      <div class="dosya">
+        <label class="drop" id="dropKontrol">
+          <b>3 · Kontrol listesi <span class="etiket">varsa</span></b>
+          <span id="adKontrol">Aksiyon / Kontrol maddeleri (.xlsx)</span>
+          <input type="file" accept=".xlsx" id="fKontrol">
+        </label>
+        <div class="katalog-durum">
+          <button class="primary" id="btnBaslat" disabled>Kontrol Listesini Analiz Et</button>
+          <div class="muted" style="font-size:12px;margin-top:6px">Kontrol listesi yoksa aşağıdan işi yazarak sorabilirsiniz.</div>
+        </div>
+      </div>
     </div>
     <div id="katalogHata" class="hata" style="margin-top:8px"></div>
   </section>
 
   <section class="card">
-    <div class="sekmeler">
-      <button class="sekme aktif" data-sekme="metin">Metinle sor</button>
-      <button class="sekme" data-sekme="excel">Excel ile toplu</button>
-    </div>
-
-    <div id="sekmeMetin" class="metin-alan">
+    <b style="display:block;margin-bottom:10px">Metinle sor</b>
+    <div class="metin-alan">
       <textarea id="tMetin" placeholder="Yapılması gereken işi anlatın. Örn: Üretimdeki YZ modellerinin performansı aylık izlenmeli, sapma olduğunda model yeniden eğitilmeli ve sonuçlar risk yönetimine raporlanmalı."></textarea>
       <div class="metin-alt">
         <button class="primary" id="btnSor">Ekipleri Bul</button>
         <label><input type="checkbox" id="cSatir"> Her satırı ayrı bir iş olarak değerlendir</label>
         <span class="muted" style="font-size:12px">Ctrl+Enter ile de gönderebilirsiniz</span>
-      </div>
-    </div>
-
-    <div id="sekmeExcel" class="upload gizli" style="grid-template-columns:1fr auto">
-      <label class="drop" id="dropKontrol">
-        <b>Kontrol listesi (.xlsx)</b>
-        <span id="adKontrol">Aksiyon / Kontrol maddelerinin olduğu dosya. Tıkla veya sürükle bırak.</span>
-        <input type="file" accept=".xlsx" id="fKontrol">
-      </label>
-      <div style="display:flex;flex-direction:column;gap:8px;justify-content:center">
-        <button class="primary" id="btnBaslat" disabled>Analizi Başlat</button>
       </div>
     </div>
     <div id="yuklemeHata" class="hata" style="margin-top:8px"></div>
@@ -297,18 +295,8 @@ function butonlariGuncelle() {
   $('#btnSor').disabled = !katalogVar;
 }
 
-// ---------- sekmeler ----------
-document.querySelectorAll('.sekme').forEach(b => b.addEventListener('click', () => sekmeAc(b.dataset.sekme)));
-function sekmeAc(ad) {
-  document.querySelectorAll('.sekme').forEach(b => b.classList.toggle('aktif', b.dataset.sekme === ad));
-  $('#sekmeMetin').classList.toggle('gizli', ad !== 'metin');
-  $('#sekmeExcel').classList.toggle('gizli', ad !== 'excel');
-  depo.yaz('yzSekme', ad);
-}
-sekmeAc(depo.al('yzSekme') || 'metin');
-
-async function isBaslat(istek) {
-  $('#yuklemeHata').textContent = '';
+async function isBaslat(istek, hataAlani = '#yuklemeHata') {
+  $('#yuklemeHata').textContent = ''; $('#katalogHata').textContent = '';
   try {
     const r = await fetch(istek.url, istek.opts);
     const j = await r.json();
@@ -319,7 +307,7 @@ async function isBaslat(istek) {
     guncelle(j);
     izle();
   } catch (e) {
-    $('#yuklemeHata').textContent = 'Hata: ' + e.message;
+    $(hataAlani).textContent = 'Hata: ' + e.message;
   }
 }
 
@@ -327,7 +315,7 @@ $('#btnBaslat').addEventListener('click', async () => {
   $('#btnBaslat').disabled = true;
   const fd = new FormData();
   fd.append('kontrol', kontrolDosya);
-  await isBaslat({ url: '/api/is', opts: { method: 'POST', body: fd } });
+  await isBaslat({ url: '/api/is', opts: { method: 'POST', body: fd } }, '#katalogHata');
   butonlariGuncelle();
 });
 
