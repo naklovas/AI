@@ -2,7 +2,7 @@
 
 Yapay zeka geliştirme sürecinin aksiyon/kontrol maddelerini, servis kataloğuna bakarak kurum içi YZ modeline sorar ve her madde için **işi yapması gereken ekip(ler)i ve görevlerini**, ayrıca **kararın gerekçesini** önerir.
 
-Proje iki dosyadan oluşur: `Program.cs` (.NET 8 minimal API) ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid). Veritabanı yoktur. İşler bellekte tutulur ve 12 saat sonra silinir.
+Proje `Program.cs` (.NET 8 minimal API), `AuthHelper.cs` ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid; açık/koyu tema) dosyalarından oluşur. Servis kataloğu ve prosedürler SQL Server'dan okunur; analiz işleri bellekte tutulur ve 12 saat sonra silinir.
 
 ## Çalıştırma
 
@@ -29,7 +29,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 | `EkipBasinaServisSayisi` | Her aday ekip için gönderilen servis sayısı. Maddeyle en ilgili servisler önce gelir. |
 | `MaksEkipSayisi` | Bir madde için önerilebilecek en fazla ekip sayısı (ilk ekip "Sorumlu", diğerleri "Destek") |
 | `DusunmeyiKapat` | Qwen3 gibi düşünen modellerde `<think>` bölümünü kapatır (`chat_template_kwargs.enable_thinking=false`). Sunucu tanımazsa `false` yapın. |
-| `ServisAciklamasiGonder` / `ServisAciklamaMaksKarakter` | Katalogdaki servis açıklamaları (başlığında "Açıklama" geçen kolon, yoksa `ExcelAyarlari:KatalogAciklamaKolonu`, varsayılan F) servis adının yanında gönderilir; her biri en fazla bu kadar karakter (`0` = tamamı). Prompt'u en çok büyüten ayar budur; sayfadaki "Prompt boyutu" kutusundan izleyin. |
+| `ServisAciklamasiGonder` / `ServisAciklamaMaksKarakter` | Katalogdaki servis açıklamaları (`SERVIS_ACIKLAMASI`) servis adının yanında gönderilir; her biri en fazla bu kadar karakter (`0` = tamamı). Prompt'u en çok büyüten ayar budur; sayfadaki "Prompt boyutu" kutusundan izleyin. |
 | `DenemeSayisi` | Hata alındığında veya yanıt ayrıştırılamadığında toplam deneme sayısı |
 | `ExcelAyarlari:KullaniciEkipKolonu / KullaniciNotKolonu` | Sizin doldurduğunuz E ve F kolonları. Bu kolonlar modele **yalnızca ipucu** olarak gider. |
 
@@ -38,8 +38,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 - **Servis kataloğu veritabanından:** `KatalogVeritabani:BaglantiMetni` doluysa katalog açılışta `[SM9PROD].[dbo].[ZTSERVISKATALOGUM1]` tablosundan okunur. Kullanılan kolonlar: `SERVIS_KODU`, `SERVIS_ADI`, `SERVIS_SAHIBI_BOLUM`, `YONETICILER`, `SERVIS_KATEGORISI`, `SERVIS_ACIKLAMASI`. Sayfadaki **Veritabanından yenile** düğmesi katalogu yeniden okur. "Kayıt durumları" listesi `DURUM` / `ONAY_DURUMU` / `RECORD_ACTIVE` dağılımını gösterir; buna bakarak `Filtre` ayarına bir WHERE koşulu yazılabilir. Tamamen farklı bir sorgu gerekiyorsa `Sorgu` ayarı kullanılır.
 - **Prosedür listesi veritabanından:** `ProsedurVeritabani:BaglantiMetni` doluysa prosedürler açılışta `[doku].[dbo].[prosedur]` tablosundan okunur (`Durum` = 0/False olanlar atlanır). Sayfada **Veritabanından yenile** düğmesi vardır.
 - **Yetki kontrolü:** `AppSettings:YetkiKontrolu = true` ise kullanıcı Windows kimliğiyle doğrulanır, `AuthHelper` ile DokuPanel'den `CurrentSiteName` için yetki listesi sorulur. Sonuç kullanıcı başına `YetkiOnbellekDakika` boyunca önbellekte tutulur. Yetkisiz kullanıcıya "Erişim Reddedildi" sayfası, API isteklerine 403 döner.
-- **Servis kataloğu Excel'den** (veritabanı yoksa veya ona ek olarak) bir kez yüklenir. Uygulama `veri/son_katalog.xlsx` dosyasında saklar; uygulama yeniden başlasa da tekrar yüklemek gerekmez. Yeni bir dosya yüklenene kadar bu katalog kullanılır.
-- **Prosedür listesi** (isteğe bağlı) de bir kez yüklenir ve `veri/` altında saklanır. Doküman Adı (D) ve Süreç Sahibi Birim (H) başlıklardan, başlık yoksa bu harflerden okunur. Yalnızca `Durum = True` satırlar alınır. Her madde için anahtar kelimeyle en ilgili `IlgiliProsedurSayisi` (varsayılan 15) prosedür, süreç sahibi birimiyle birlikte modele gönderilir. Süreç sahibi birim, katalogdaki ekiple eşleştirilir. Model ilgili prosedürleri `PROSEDUR: <doküman kodu> | <ilişki>` satırlarıyla döner; listede olmayan kodlar atılır. Sonuçlar gridde (linkli) ve Excel'de üçüncü kolon (*YZ İlgili Mevcut Prosedürler*) olarak gösterilir.
+- **Prosedürler:** Her madde için anahtar kelimeyle en ilgili `IlgiliProsedurSayisi` (varsayılan 15) prosedür, süreç sahibi birimiyle birlikte modele gönderilir. Süreç sahibi birim, katalogdaki ekiple eşleştirilir. Model ilgili prosedürleri `PROSEDUR: <doküman kodu> | <ilişki>` satırlarıyla döner; listede olmayan kodlar atılır. Sonuçlar gridde (linkli) ve Excel'de üçüncü kolon (*YZ İlgili Mevcut Prosedürler*) olarak gösterilir.
 - **Metinle sor** kartına yapılacak işi yazıp **Ekipleri Bul**'a basın. Sorumlu ve destek ekipler, her birinin görevi ve karar gerekçesi gösterilir. "Her satırı ayrı bir iş olarak değerlendir" seçiliyse her satır ayrı bir madde olur; baştaki `1.`, `-` gibi işaretler atılır. Sonuçlar gridde listelenir ve Excel olarak indirilebilir.
 - **Toplu analiz · Kontrol listesi** kartına kontrol listesi yüklenip **Analizi Başlat** ile bütün maddeler işlenir (dosya seçilmemişse düğme dosya seçtirir).
 
@@ -70,7 +69,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 
 ## Akış
 
-1. Kontrol listesi ve servis kataloğu Excel dosyaları yüklenir. Başlık satırı otomatik bulunur (Kontrol listesinde "Aksiyon/Kontrol", katalogda "Servis Adı", "Servis Sahibi Bölüm" ve varsa "Açıklama" başlıkları aranır). Birleştirilmiş hücreler desteklenir.
+1. Servis kataloğu ve prosedürler veritabanından okunur. Kontrol listesi Excel olarak yüklenir; başlık satırı ("Aksiyon/Kontrol") otomatik bulunur, birleştirilmiş hücreler desteklenir.
 2. Katalog "Servis Sahibi Bölüm" bazında gruplanarak ekip profilleri çıkarılır.
 3. Her madde için anahtar kelime benzerliğiyle aday ekipler seçilir. E kolonunda yazdığınız ekipler her zaman adaylara eklenir. Ardından model çağrılır. Model `EKIP: ad | Sorumlu | görev`, `GUVEN: %80`, `GEREKCE: ...` satırlarıyla yanıt verir; JSON dönerse o da okunur. `<think>` blokları atlanır.
 4. Modelin yazdığı ekip adı katalogla eşleştirilir (büyük-küçük harf, Türkçe karakter ve kısmi ad farkları tolere edilir). Katalogda bulunamayan ekip kırmızı ile işaretlenir.

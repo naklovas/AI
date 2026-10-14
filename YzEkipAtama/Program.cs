@@ -95,21 +95,6 @@ app.MapGet("/api/ayarlar", (HttpContext ctx, YzAyarlari a, ExcelAyarlari e) => n
 
 app.MapGet("/api/katalog", (IsYoneticisi yonetici) => yonetici.KatalogBilgisi());
 
-app.MapPost("/api/katalog", async (HttpRequest req, IsYoneticisi yonetici) =>
-{
-    if (!req.HasFormContentType || req.Form.Files["katalog"] is not { } dosya)
-        return Results.BadRequest(new { hata = "Servis kataloğu Excel dosyası gerekli." });
-    try
-    {
-        yonetici.KatalogYukle(await OkuAsync(dosya), dosya.FileName);
-        return Results.Ok(yonetici.KatalogBilgisi());
-    }
-    catch (ExcelOkumaHatasi ex)
-    {
-        return Results.BadRequest(new { hata = ex.Message });
-    }
-});
-
 app.MapPost("/api/katalog/veritabani", (IsYoneticisi yonetici) =>
 {
     try
@@ -125,21 +110,6 @@ app.MapPost("/api/katalog/veritabani", (IsYoneticisi yonetici) =>
 
 app.MapGet("/api/prosedur", (IsYoneticisi yonetici) => yonetici.ProsedurBilgisi());
 
-app.MapPost("/api/prosedur", async (HttpRequest req, IsYoneticisi yonetici) =>
-{
-    if (!req.HasFormContentType || req.Form.Files["prosedur"] is not { } dosya)
-        return Results.BadRequest(new { hata = "Prosedür listesi Excel dosyası gerekli." });
-    try
-    {
-        yonetici.ProsedurYukle(await OkuAsync(dosya), dosya.FileName);
-        return Results.Ok(yonetici.ProsedurBilgisi());
-    }
-    catch (ExcelOkumaHatasi ex)
-    {
-        return Results.BadRequest(new { hata = ex.Message });
-    }
-});
-
 app.MapPost("/api/prosedur/veritabani", (IsYoneticisi yonetici) =>
 {
     try
@@ -153,26 +123,18 @@ app.MapPost("/api/prosedur/veritabani", (IsYoneticisi yonetici) =>
     }
 });
 
-app.MapDelete("/api/prosedur", (IsYoneticisi yonetici) =>
-{
-    yonetici.ProsedurKaldir();
-    return Results.Ok(yonetici.ProsedurBilgisi());
-});
-
-// Excel ile toplu analiz. Katalog gönderilmezse son yüklenen katalog kullanılır.
+// Kontrol listesi Excel'i ile toplu analiz (katalog ve prosedürler veritabanından gelir)
 app.MapPost("/api/is", async (HttpRequest req, IsYoneticisi yonetici) =>
 {
     if (!req.HasFormContentType)
         return Results.BadRequest(new { hata = "multipart/form-data bekleniyor." });
     var form = await req.ReadFormAsync();
     var kontrolDosya = form.Files["kontrol"];
-    var katalogDosya = form.Files["katalog"];
     if (kontrolDosya is null)
         return Results.BadRequest(new { hata = "Kontrol listesi Excel dosyası gerekli." });
 
     try
     {
-        if (katalogDosya is not null) yonetici.KatalogYukle(await OkuAsync(katalogDosya), katalogDosya.FileName);
         var analiz = yonetici.ExcelIleBaslat(await OkuAsync(kontrolDosya), kontrolDosya.FileName);
         return Results.Ok(analiz.Durum());
     }
@@ -314,11 +276,7 @@ class ExcelAyarlari
     public string KullaniciNotKolonu { get; set; } = "F";
     public string CiktiEkipBasligi { get; set; } = "YZ Önerilen Ekipler ve Görevleri";
     public string CiktiGerekceBasligi { get; set; } = "YZ Karar Gerekçesi";
-    public string KatalogAciklamaKolonu { get; set; } = "F";
     public string CiktiProsedurBasligi { get; set; } = "YZ İlgili Mevcut Prosedürler";
-    /// Prosedür listesinde başlıklar bulunamazsa kullanılacak kolon harfleri
-    public string ProsedurAdKolonu { get; set; } = "D";
-    public string ProsedurBirimKolonu { get; set; } = "H";
     /// Kontrol hücresinde birden fazla madde varsa (-, •, 1., a) veya alt alta satırlar) her biri ayrı değerlendirilir
     public bool HucreMaddeleriniAyir { get; set; } = true;
     /// Katalogda olmayan ama kurumda var olan ekipler (ör. Proje Yönetimi Ofisi). Boş bırakılırsa varsayılan liste kullanılır.
@@ -841,39 +799,7 @@ static class ExcelIslemleri
         return (KatalogOlustur(servisler, ayar), durumlar);
     }
 
-    public static Katalog KatalogOku(byte[] bytes, ExcelAyarlari ayar)
-    {
-        using var wb = Ac(bytes, "Servis kataloğu");
-        var bulunan = BaslikBul(wb, b => b.Any(x => x.Contains("servis")) && b.Any(x => x.Contains("sahibi") || x.Contains("bolum")))
-            ?? throw new ExcelOkumaHatasi("Servis kataloğunda 'Servis Adı' ve 'Servis Sahibi Bölüm' başlıkları bulunamadı.");
-        var (ws, baslik) = bulunan;
-
-        int Kolon(params string[] anahtarlar) => ws.Row(baslik).CellsUsed()
-            .FirstOrDefault(c => anahtarlar.Any(a => Metin.Normalize(c.GetFormattedString()).Contains(a)))?.Address.ColumnNumber ?? 0;
-
-        int kod = Kolon("servis kodu", "kod"), ad = Kolon("servis adi", "servis ad"), bolum = Kolon("sahibi bolum", "sahibi", "bolum"),
-            yonetici = Kolon("yonetici"), kategori = Kolon("kategori");
-        // Servis açıklaması: önce "Açıklama" başlığı aranır, bulunamazsa ayardaki kolon harfi (varsayılan F) kullanılır
-        int aciklama = Kolon("aciklama", "tanim");
-        if (aciklama == 0 && !string.IsNullOrWhiteSpace(ayar.KatalogAciklamaKolonu)) aciklama = KolonNo(ayar.KatalogAciklamaKolonu);
-        if (ad == 0 || bolum == 0)
-            throw new ExcelOkumaHatasi("Servis kataloğunda 'Servis Adı' veya 'Servis Sahibi Bölüm' kolonu bulunamadı.");
-
-        string Al(IXLRow r, int k) => k == 0 ? "" : Deger(r.Cell(k));
-        var servisler = new List<Servis>();
-        var sonSatir = ws.LastRowUsed()?.RowNumber() ?? baslik;
-        for (int i = baslik + 1; i <= sonSatir; i++)
-        {
-            var r = ws.Row(i);
-            var sv = new Servis(Al(r, kod), Al(r, ad), Al(r, bolum), Al(r, yonetici), Al(r, kategori),
-                Regex.Replace(Al(r, aciklama), @"\s+", " ").Trim());
-            if (sv.Ad.Length > 0 && sv.Bolum.Length > 0) servisler.Add(sv);
-        }
-
-        return KatalogOlustur(servisler, ayar);
-    }
-
-    /// Servis listesinden katalog kurar; ayarlardaki ek görev tanımlarını ekler (Excel ve veritabanı için ortak)
+    /// Servis listesinden katalog kurar; ayarlardaki ek görev tanımlarını ekler
     public static Katalog KatalogOlustur(List<Servis> servisler, ExcelAyarlari ayar)
     {
         if (servisler.Count == 0) throw new ExcelOkumaHatasi("Servis kataloğunda hiç ekip (Servis Sahibi Bölüm) bulunamadı.");
@@ -925,49 +851,6 @@ static class ExcelIslemleri
             throw new ExcelOkumaHatasi($"Prosedür listesi veritabanından okunamadı: {ex.Message}");
         }
         if (liste.Count == 0) throw new ExcelOkumaHatasi("Prosedür tablosunda geçerli (Durum = True) satır bulunamadı.");
-        return liste;
-    }
-
-    public static List<Prosedur> ProsedurOku(byte[] bytes, ExcelAyarlari ayar)
-    {
-        using var wb = Ac(bytes, "Prosedür listesi");
-        // Başlıklar bulunamazsa ilk sayfanın 1. satırı başlık kabul edilir; ad ve birim D / H kolonlarından okunur
-        var (ws, baslik) = BaslikBul(wb, b => b.Any(x => x.Contains("dokuman adi")) && b.Any(x => x.Contains("surec sahibi") || x.Contains("birim")))
-            ?? (wb.Worksheet(1), 1);
-        var basliklar = ws.Row(baslik).CellsUsed().Select(c => (no: c.Address.ColumnNumber, ad: Metin.Normalize(c.GetFormattedString()))).ToList();
-        int Kolon(Func<string, bool> kosul) => basliklar.FirstOrDefault(b => kosul(b.ad)).no;
-
-        int tip = Kolon(a => a.Contains("mevzuat tipi") || a == "tip"), kod = Kolon(a => a == "kod"), dkod = Kolon(a => a.Contains("dokuman kodu")),
-            ad = Kolon(a => a.Contains("dokuman adi")), birim = Kolon(a => a.Contains("surec sahibi") || a.Contains("birim")),
-            model = Kolon(a => a.Contains("surec modeli")), durum = Kolon(a => a == "durum"), link = Kolon(a => a.Contains("link"));
-        if (ad == 0) ad = KolonNo(ayar.ProsedurAdKolonu);
-        if (birim == 0) birim = KolonNo(ayar.ProsedurBirimKolonu);
-
-        string Al(IXLRow r, int k) => k == 0 ? "" : Deger(r.Cell(k));
-        string LinkAl(IXLRow r)
-        {
-            if (link == 0) return "";
-            var c = r.Cell(link);
-            try { if (c.HasHyperlink && c.GetHyperlink().ExternalAddress is { } u) return u.ToString(); } catch { }
-            var metin = Deger(c);
-            return metin.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? metin : "";
-        }
-
-        var liste = new List<Prosedur>();
-        var sonSatir = ws.LastRowUsed()?.RowNumber() ?? baslik;
-        for (int i = baslik + 1; i <= sonSatir; i++)
-        {
-            var r = ws.Row(i);
-            if (Al(r, ad).Length == 0) continue;
-            // Pasif dokümanlar alınmaz
-            if (durum != 0 && PasifMi(Al(r, durum))) continue;
-            liste.Add(new Prosedur
-            {
-                Tip = Al(r, tip), Kod = Al(r, kod), DokumanKodu = Al(r, dkod), Ad = Al(r, ad),
-                Birim = Al(r, birim), SurecModeli = Al(r, model), Link = LinkAl(r)
-            });
-        }
-        if (liste.Count == 0) throw new ExcelOkumaHatasi("Prosedür listesinde geçerli (Durum = True) satır bulunamadı.");
         return liste;
     }
 
@@ -1418,13 +1301,11 @@ class IsYoneticisi
     readonly ILogger<IsYoneticisi> log;
     readonly ConcurrentDictionary<string, AnalizIsi> isler = new();
 
-    // Son yüklenen katalog diske de yazılır; uygulama yeniden başlasa da tekrar yüklemek gerekmez
-    readonly string katalogYolu, katalogAdYolu;
+    // Katalog ve prosedürler veritabanından okunur (açılışta ve "Veritabanından yenile" ile)
     Katalog? katalog;
     string katalogAdi = "";
     DateTime katalogZamani;
 
-    readonly string prosedurYolu, prosedurAdYolu;
     List<Prosedur>? prosedurler;
     string prosedurAdi = "";
     DateTime prosedurZamani;
@@ -1432,44 +1313,15 @@ class IsYoneticisi
 
     readonly KatalogVeritabaniAyarlari db;
     readonly ProsedurVeritabaniAyarlari prosedurDb;
-    string prosedurKaynak = "";
     volatile bool prosedurOkunuyor;
-    string katalogKaynak = "";                       // "Excel" veya "Veritabanı"
     Dictionary<string, int> katalogDurumlari = [];
     volatile bool veritabaniOkunuyor;
 
-    public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env,
+    public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log,
         KatalogVeritabaniAyarlari db, ProsedurVeritabaniAyarlari prosedurDb)
     {
         (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db, this.prosedurDb) = (ayar, excelAyar, httpFactory, log, db, prosedurDb);
-        var klasor = Path.Combine(env.ContentRootPath, "veri");
-        katalogYolu = Path.Combine(klasor, "son_katalog.xlsx");
-        katalogAdYolu = Path.Combine(klasor, "son_katalog_adi.txt");
-        prosedurYolu = Path.Combine(klasor, "son_prosedur.xlsx");
-        prosedurAdYolu = Path.Combine(klasor, "son_prosedur_adi.txt");
-        if (File.Exists(prosedurYolu))
-        {
-            try
-            {
-                prosedurler = ExcelIslemleri.ProsedurOku(File.ReadAllBytes(prosedurYolu), excelAyar);
-                prosedurAdi = File.Exists(prosedurAdYolu) ? File.ReadAllText(prosedurAdYolu).Trim() : "son_prosedur.xlsx";
-                prosedurZamani = File.GetLastWriteTime(prosedurYolu);
-                prosedurKaynak = "Excel";
-            }
-            catch (Exception ex) { log.LogWarning("Kayıtlı prosedür listesi okunamadı: {Hata}", ex.Message); }
-        }
-        if (File.Exists(katalogYolu))
-        {
-            try
-            {
-                katalog = ExcelIslemleri.KatalogOku(File.ReadAllBytes(katalogYolu), excelAyar);
-                katalogAdi = File.Exists(katalogAdYolu) ? File.ReadAllText(katalogAdYolu).Trim() : "son_katalog.xlsx";
-                katalogZamani = File.GetLastWriteTime(katalogYolu);
-                katalogKaynak = "Excel";
-            }
-            catch (Exception ex) { log.LogWarning("Kayıtlı katalog okunamadı: {Hata}", ex.Message); }
-        }
-        // Veritabanı tanımlıysa açılışta katalog oradan (arka planda) yenilenir; olmazsa son Excel katalogu kullanılır
+        // Açılışta katalog ve prosedürler arka planda veritabanından okunur
         prosedurOkunuyor = prosedurDb.Tanimli;
         if (prosedurDb.Tanimli) _ = Task.Run(() => { try { ProsedurVeritabanindanYukle(); } catch (Exception ex) { prosedurOkunuyor = false; log.LogWarning("Prosedürler veritabanından okunamadı: {Hata}", ex.Message); } });
         veritabaniOkunuyor = db.Tanimli;
@@ -1483,8 +1335,7 @@ class IsYoneticisi
         try
         {
             var (yeni, durumlar) = ExcelIslemleri.KatalogVeritabanindanOku(db, excelAyar);
-            (katalog, katalogAdi, katalogZamani, kutuphane, katalogKaynak, katalogDurumlari) =
-                (yeni, db.Tablo, DateTime.Now, null, "Veritabanı", durumlar);
+            (katalog, katalogAdi, katalogZamani, kutuphane, katalogDurumlari) = (yeni, db.Tablo, DateTime.Now, null, durumlar);
             log.LogInformation("Katalog veritabanından okundu: {Ekip} ekip", yeni.Ekipler.Count);
         }
         finally { veritabaniOkunuyor = false; }
@@ -1497,7 +1348,6 @@ class IsYoneticisi
             var = true,
             veritabaniTanimli = db.Tanimli,
             veritabaniOkunuyor,
-            kaynak = katalogKaynak,
             durumlar = katalogDurumlari.OrderByDescending(d => d.Value).Select(d => new { durum = d.Key, adet = d.Value }),
             dosyaAdi = katalogAdi,
             yuklenme = katalogZamani,
@@ -1507,19 +1357,6 @@ class IsYoneticisi
             ekTanimliEkipler = katalog.Ekipler.Where(e => e.Servisler.Any(sv => sv.Kod == "EK")).Select(e => e.Ad)
         };
 
-    public void KatalogYukle(byte[] bytes, string dosyaAdi)
-    {
-        var yeni = ExcelIslemleri.KatalogOku(bytes, excelAyar);
-        (katalog, katalogAdi, katalogZamani, kutuphane, katalogKaynak, katalogDurumlari) = (yeni, dosyaAdi, DateTime.Now, null, "Excel", []);
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(katalogYolu)!);
-            File.WriteAllBytes(katalogYolu, bytes);
-            File.WriteAllText(katalogAdYolu, dosyaAdi);
-        }
-        catch (Exception ex) { log.LogWarning("Katalog diske yazılamadı: {Hata}", ex.Message); }
-    }
-
     public void ProsedurVeritabanindanYukle()
     {
         if (!prosedurDb.Tanimli) throw new ExcelOkumaHatasi("appsettings.json: ProsedurVeritabani:BaglantiMetni tanımlı değil.");
@@ -1527,7 +1364,7 @@ class IsYoneticisi
         try
         {
             var yeni = ExcelIslemleri.ProsedurVeritabanindanOku(prosedurDb);
-            (prosedurler, prosedurAdi, prosedurZamani, kutuphane, prosedurKaynak) = (yeni, prosedurDb.Tablo, DateTime.Now, null, "Veritabanı");
+            (prosedurler, prosedurAdi, prosedurZamani, kutuphane) = (yeni, prosedurDb.Tablo, DateTime.Now, null);
             log.LogInformation("Prosedürler veritabanından okundu: {Adet}", yeni.Count);
         }
         finally { prosedurOkunuyor = false; }
@@ -1542,7 +1379,6 @@ class IsYoneticisi
             var = true,
             veritabaniTanimli = prosedurDb.Tanimli,
             veritabaniOkunuyor = prosedurOkunuyor,
-            kaynak = prosedurKaynak,
             dosyaAdi = prosedurAdi,
             yuklenme = prosedurZamani,
             prosedurSayisi = prosedurler.Count,
@@ -1551,32 +1387,15 @@ class IsYoneticisi
         };
     }
 
-    public void ProsedurYukle(byte[] bytes, string dosyaAdi)
-    {
-        var yeni = ExcelIslemleri.ProsedurOku(bytes, excelAyar);
-        (prosedurler, prosedurAdi, prosedurZamani, kutuphane, prosedurKaynak) = (yeni, dosyaAdi, DateTime.Now, null, "Excel");
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(prosedurYolu)!);
-            File.WriteAllBytes(prosedurYolu, bytes);
-            File.WriteAllText(prosedurAdYolu, dosyaAdi);
-        }
-        catch (Exception ex) { log.LogWarning("Prosedür listesi diske yazılamadı: {Hata}", ex.Message); }
-    }
-
-    public void ProsedurKaldir()
-    {
-        (prosedurler, kutuphane) = (null, null);
-        try { File.Delete(prosedurYolu); File.Delete(prosedurAdYolu); } catch { }
-    }
-
     ProsedurKutuphanesi? AktifKutuphane()
     {
         if (prosedurler is null || katalog is null) return null;
         return kutuphane ??= new ProsedurKutuphanesi(prosedurler, katalog);
     }
 
-    Katalog AktifKatalog() => katalog ?? throw new ExcelOkumaHatasi("Önce servis kataloğu Excel dosyasını yükleyin.");
+    Katalog AktifKatalog() => katalog ?? throw new ExcelOkumaHatasi(veritabaniOkunuyor
+        ? "Servis kataloğu veritabanından okunuyor, birkaç saniye sonra tekrar deneyin."
+        : "Servis kataloğu yüklü değil. KatalogVeritabani:BaglantiMetni ayarını kontrol edip 'Veritabanından yenile'ye basın.");
 
     public AnalizIsi ExcelIleBaslat(byte[] kontrolBytes, string dosyaAdi) => Baslat(new AnalizIsi
     {

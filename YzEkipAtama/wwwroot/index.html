@@ -4,17 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YZ Ekip Atama</title>
+<script>try { const t = localStorage.getItem('yzTema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}</script>
 <style>
 :root{
   --bg:#f4f6f9;--panel:#fff;--panel2:#f8fafc;--text:#1b2430;--muted:#64748b;--line:#e2e8f0;
   --accent:#2563eb;--accent-soft:#dbeafe;--ok:#15803d;--ok-soft:#dcfce7;--warn:#b45309;--warn-soft:#fef3c7;
-  --err:#b91c1c;--err-soft:#fee2e2;--chip:#eef2ff;--chip-text:#3730a3;--shadow:0 1px 3px rgba(15,23,42,.08),0 4px 16px rgba(15,23,42,.04);
+  --err:#b91c1c;--err-soft:#fee2e2;--chip:#eef2ff;--chip-text:#3730a3;--on-accent:#fff;--shadow:0 1px 3px rgba(15,23,42,.08),0 4px 16px rgba(15,23,42,.04);
 }
+/* Tema: data-theme="light" | "dark"; yoksa işletim sistemi ayarı kullanılır */
 @media (prefers-color-scheme: dark){
-  :root{--bg:#0f141b;--panel:#161d27;--panel2:#1b2430;--text:#e5e9f0;--muted:#94a3b8;--line:#2a3442;
+  :root:not([data-theme="light"]){--bg:#0f141b;--panel:#161d27;--panel2:#1b2430;--text:#e5e9f0;--muted:#94a3b8;--line:#2a3442;
   --accent:#60a5fa;--accent-soft:#1e3a5f;--ok:#4ade80;--ok-soft:#163a26;--warn:#fbbf24;--warn-soft:#3d2f10;
-  --err:#f87171;--err-soft:#3f1717;--chip:#25264a;--chip-text:#c7d2fe;--shadow:none}
+  --err:#f87171;--err-soft:#3f1717;--chip:#25264a;--chip-text:#c7d2fe;--shadow:none;--on-accent:#0b1220;color-scheme:dark}
 }
+:root[data-theme="dark"]{--bg:#0f141b;--panel:#161d27;--panel2:#1b2430;--text:#e5e9f0;--muted:#94a3b8;--line:#2a3442;
+  --accent:#60a5fa;--accent-soft:#1e3a5f;--ok:#4ade80;--ok-soft:#163a26;--warn:#fbbf24;--warn-soft:#3d2f10;
+  --err:#f87171;--err-soft:#3f1717;--chip:#25264a;--chip-text:#c7d2fe;--shadow:none;--on-accent:#0b1220;color-scheme:dark}
+.tema{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tema button{border:none;border-radius:0;padding:5px 10px;font-size:12px;background:var(--panel);color:var(--muted)}
+.tema button.secili{background:var(--accent);color:var(--on-accent)}
+.bilgi{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.bilgi > b{font-size:13px}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
 header{background:var(--panel);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
@@ -30,7 +40,7 @@ main{padding:20px 24px;max-width:1800px;margin:0 auto}
 .drop input{display:none}
 button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:7px;padding:8px 14px;cursor:pointer}
 button:hover{border-color:var(--accent)}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
 button:disabled{opacity:.5;cursor:not-allowed}
 button.sm{padding:3px 8px;font-size:12px}
 .progress{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -105,27 +115,22 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 <header>
   <h1>YZ Geliştirme Süreci · Ekip Atama</h1>
   <div class="meta" id="meta">Ayarlar yükleniyor…</div>
+  <div class="tema" id="tema" title="Tema">
+    <button data-tema="system">Sistem</button><button data-tema="light">Açık</button><button data-tema="dark">Koyu</button>
+  </div>
 </header>
 <main>
   <div class="uyari gizli" id="apiUyari">appsettings.json içinde <b>QwenApiUrl</b> tanımlı değil; model çağrıları hata verecek.</div>
 
   <section class="card">
     <div class="dosyalar">
-      <div class="dosya">
-        <label class="drop" id="dropKatalog">
-          <b>1 · Servis kataloğu <span class="etiket zorunlu">zorunlu</span></b>
-          <span id="adKatalog">Tıkla veya sürükle bırak (.xlsx)</span>
-          <input type="file" accept=".xlsx" id="fKatalog">
-        </label>
+      <div class="bilgi">
+        <b>Servis kataloğu <span class="etiket">veritabanı</span></b>
         <div class="katalog-durum" id="katalogDurum">Katalog bilgisi okunuyor…</div>
       </div>
-      <div class="dosya">
-        <label class="drop" id="dropProsedur">
-          <b>2 · Prosedür listesi <span class="etiket">isteğe bağlı</span></b>
-          <span id="adProsedur">Sistemden alındığı gibi yükleyin (.xlsx)</span>
-          <input type="file" accept=".xlsx" id="fProsedur">
-        </label>
-        <div class="katalog-durum" id="prosedurDurum"></div>
+      <div class="bilgi">
+        <b>Prosedür listesi <span class="etiket">veritabanı</span></b>
+        <div class="katalog-durum" id="prosedurDurum">Prosedür bilgisi okunuyor…</div>
       </div>
     </div>
     <div id="katalogHata" class="hata" style="margin-top:8px"></div>
@@ -228,6 +233,19 @@ fetch('/api/ayarlar').then(r => r.json()).then(a => {
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 
+// ---------- tema ----------
+function temaUygula(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+  document.querySelectorAll('#tema button').forEach(b => b.classList.toggle('secili', b.dataset.tema === (t || 'system')));
+}
+temaUygula(depo.al('yzTema') || 'system');
+$('#tema').addEventListener('click', e => {
+  const t = e.target.dataset.tema; if (!t) return;
+  depo.yaz('yzTema', t === 'system' ? null : t);
+  temaUygula(t);
+});
+
 // ---------- katalog ----------
 let katalogVar = false;
 function katalogGoster(k) {
@@ -236,10 +254,11 @@ function katalogGoster(k) {
   const durumlar = (k.durumlar || []).length
     ? `<details style="margin-top:4px"><summary>Kayıt durumları (filtre için)</summary>${k.durumlar.map(d => `<div>${esc(d.durum)}: <b>${d.adet}</b></div>`).join('')}</details>` : '';
   $('#katalogDurum').innerHTML = k.var
-    ? `Aktif katalog (${esc(k.kaynak || 'Excel')}): <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}${dbDugme}` +
+    ? `<b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}${dbDugme}` +
       (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '') + durumlar
-    : (k.veritabaniOkunuyor ? 'Katalog veritabanından okunuyor…' : '<span class="hata">Henüz katalog yok. Excel yükleyin' + (k.veritabaniTanimli ? ' veya veritabanından okuyun.' : '.') + '</span>') + dbDugme;
-  $('#dropKatalog').classList.toggle('dolu', katalogVar);
+    : (k.veritabaniOkunuyor ? 'Katalog veritabanından okunuyor…'
+       : k.veritabaniTanimli ? '<span class="hata">Katalog okunamadı. Bağlantıyı kontrol edip tekrar deneyin.</span>'
+       : '<span class="hata">appsettings.json içinde KatalogVeritabani:BaglantiMetni tanımlı değil.</span>') + dbDugme;
   butonlariGuncelle();
   // Açılışta veritabanı okuması sürüyorsa bitene kadar yokla
   if (k.veritabaniOkunuyor) setTimeout(katalogBilgisiAl, 2000);
@@ -259,18 +278,18 @@ $('#katalogDurum').addEventListener('click', async e => {
 });
 
 function prosedurGoster(p) {
-  $('#dropProsedur').classList.toggle('dolu', !!p.var);
   const dbDugme = p.veritabaniTanimli ? ` <button class="sm" id="btnProsedurDb" ${p.veritabaniOkunuyor ? 'disabled' : ''}>${p.veritabaniOkunuyor ? 'Veritabanından okunuyor…' : 'Veritabanından yenile'}</button>` : '';
   $('#prosedurDurum').innerHTML = p.var
-    ? `Aktif liste (${esc(p.kaynak || 'Excel')}): <b>${esc(p.dosyaAdi)}</b> · ${p.prosedurSayisi} yürürlükteki doküman, ${p.birimSayisi} birim` +
+    ? `<b>${esc(p.dosyaAdi)}</b> · ${p.prosedurSayisi} yürürlükteki doküman, ${p.birimSayisi} birim` +
       (p.eslesmeyenBirim ? ` · <span class="hata" title="Bu birimlerin adı katalogdaki Servis Sahibi Bölüm adlarıyla eşleşmedi; prosedürleri gösterilir ama bu birimlere ekip ataması yapılmaz">${p.eslesmeyenBirim} birim katalogda eşleşmedi</span>` : '') +
-      dbDugme + (p.kaynak === 'Excel' ? ` <button class="sm" id="btnProsedurKaldir">Kaldır</button>` : '')
-    : (p.veritabaniOkunuyor ? 'Prosedürler veritabanından okunuyor…' : 'Yüklenmedi. Yüklerseniz model, işle ilgili mevcut prosedürleri de gösterir ve ekip kararında kanıt olarak kullanır.') + dbDugme;
+      dbDugme
+    : (p.veritabaniOkunuyor ? 'Prosedürler veritabanından okunuyor…'
+       : p.veritabaniTanimli ? '<span class="hata">Prosedürler okunamadı. Bağlantıyı kontrol edip tekrar deneyin.</span>'
+       : 'ProsedurVeritabani:BaglantiMetni tanımlı değil; prosedürler kullanılmıyor.') + dbDugme;
   if (p.veritabaniOkunuyor) setTimeout(prosedurBilgisiAl, 2000);
 }
 function prosedurBilgisiAl() { fetch('/api/prosedur').then(r => r.json()).then(prosedurGoster).catch(() => {}); }
 $('#prosedurDurum').addEventListener('click', async e => {
-  if (e.target.id === 'btnProsedurKaldir') return prosedurGoster(await (await fetch('/api/prosedur', { method: 'DELETE' })).json());
   if (e.target.id !== 'btnProsedurDb') return;
   e.target.disabled = true; e.target.textContent = 'Veritabanından okunuyor…';
   $('#katalogHata').textContent = '';
@@ -281,34 +300,7 @@ $('#prosedurDurum').addEventListener('click', async e => {
     prosedurGoster(j);
   } catch (err) { $('#katalogHata').textContent = 'Hata: ' + err.message; prosedurBilgisiAl(); }
 });
-async function prosedurYukle(f) {
-  if (!f) return;
-  $('#katalogHata').textContent = '';
-  $('#adProsedur').textContent = f.name + ' yükleniyor…';
-  const fd = new FormData(); fd.append('prosedur', f);
-  try {
-    const r = await fetch('/api/prosedur', { method: 'POST', body: fd });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.hata || r.statusText);
-    prosedurGoster(j);
-  } catch (e) { $('#katalogHata').textContent = 'Hata: ' + e.message; }
-  $('#adProsedur').textContent = 'Değiştirmek için tıkla ya da sürükle bırak.';
-}
 
-async function katalogYukle(f) {
-  if (!f) return;
-  $('#katalogHata').textContent = '';
-  $('#adKatalog').textContent = f.name + ' yükleniyor…';
-  const fd = new FormData(); fd.append('katalog', f);
-  try {
-    const r = await fetch('/api/katalog', { method: 'POST', body: fd });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.hata || r.statusText);
-    katalogGoster(j);
-    prosedurBilgisiAl();
-  } catch (e) { $('#katalogHata').textContent = 'Hata: ' + e.message; }
-  $('#adKatalog').textContent = 'Değiştirmek için tıkla ya da sürükle bırak.';
-}
 
 // ---------- dosya seçimi ----------
 let kontrolDosya = null;
@@ -319,8 +311,6 @@ function dropBagla(dropId, inputId, sec) {
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); sec(e.dataTransfer.files[0]); });
 }
-dropBagla('#dropKatalog', '#fKatalog', katalogYukle);
-dropBagla('#dropProsedur', '#fProsedur', prosedurYukle);
 dropBagla('#dropKontrol', '#fKontrol', f => {
   if (!f) return;
   kontrolDosya = f; $('#adKontrol').textContent = f.name; $('#dropKontrol').classList.add('dolu'); butonlariGuncelle();
