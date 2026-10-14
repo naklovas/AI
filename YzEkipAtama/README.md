@@ -4,7 +4,7 @@
 
 Yapay zeka geliştirme sürecinin aksiyon/kontrol maddelerini, servis kataloğuna bakarak kurum içi YZ modeline sorar ve her madde için **işi yapması gereken ekip(ler)i ve görevlerini**, ayrıca **kararın gerekçesini** önerir.
 
-Proje `Program.cs` (.NET 10 minimal API), `AuthHelper.cs` ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid; açık/koyu tema) dosyalarından oluşur. Servis kataloğu ve prosedürler SQL Server'dan okunur; analiz işleri bellekte tutulur ve 12 saat sonra silinir.
+Proje `Program.cs` (.NET 9 minimal API), `AuthHelper.cs` ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid; açık/koyu tema) dosyalarından oluşur. Servis kataloğu ve prosedürler SQL Server'dan okunur; analiz işleri bellekte tutulur ve 12 saat sonra silinir.
 
 ## Çalıştırma
 
@@ -37,13 +37,13 @@ Uygulama `http://localhost:5080` adresinde açılır.
 
 ## Sunucuya yayın (IIS)
 
-Sunucuda **.NET 10 Hosting Bundle** kurulu olmalıdır. Visual Studio'da **Yayımla → Sunucu** profilini (`Properties/PublishProfiles/Sunucu.pubxml`) kullanın ya da komut satırından:
+Sunucuda **.NET 9 Hosting Bundle** (veya üstü) kurulu olmalıdır. Visual Studio'da **Yayımla → Sunucu** profilini (`Properties/PublishProfiles/Sunucu.pubxml`) kullanın ya da komut satırından:
 
 ```cmd
 dotnet publish -c Release -p:PublishProfile=Sunucu
 ```
 
-Çıktı `bin\Release\net10.0\publish\` klasörüne çıkar. IIS uygulama havuzunda ".NET CLR Version" = **No Managed Code** olmalıdır. Yetki kontrolü kullanılıyorsa sitede **Windows Authentication** açık olmalıdır.
+Çıktı `bin\Release\net9.0\publish\` klasörüne çıkar. IIS uygulama havuzunda ".NET CLR Version" = **No Managed Code** olmalıdır. Yetki kontrolü kullanılıyorsa sitede **Windows Authentication** açık olmalıdır.
 
 ## Kullanım
 
