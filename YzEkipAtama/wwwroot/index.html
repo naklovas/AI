@@ -224,7 +224,7 @@ let isId = null, veri = null, zamanlayici = null, sirala = { k: 'satirNo', azala
 
 // ---------- ayarlar ----------
 fetch('/api/ayarlar').then(r => r.json()).then(a => {
-  $('#meta').textContent = `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#meta').textContent = (a.kullanici ? `${a.kullanici} · ` : '') + `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 
@@ -260,16 +260,26 @@ $('#katalogDurum').addEventListener('click', async e => {
 
 function prosedurGoster(p) {
   $('#dropProsedur').classList.toggle('dolu', !!p.var);
+  const dbDugme = p.veritabaniTanimli ? ` <button class="sm" id="btnProsedurDb" ${p.veritabaniOkunuyor ? 'disabled' : ''}>${p.veritabaniOkunuyor ? 'Veritabanından okunuyor…' : 'Veritabanından yenile'}</button>` : '';
   $('#prosedurDurum').innerHTML = p.var
-    ? `Aktif liste: <b>${esc(p.dosyaAdi)}</b> · ${p.prosedurSayisi} yürürlükteki doküman, ${p.birimSayisi} birim` +
+    ? `Aktif liste (${esc(p.kaynak || 'Excel')}): <b>${esc(p.dosyaAdi)}</b> · ${p.prosedurSayisi} yürürlükteki doküman, ${p.birimSayisi} birim` +
       (p.eslesmeyenBirim ? ` · <span class="hata" title="Bu birimlerin adı katalogdaki Servis Sahibi Bölüm adlarıyla eşleşmedi; prosedürleri gösterilir ama bu birimlere ekip ataması yapılmaz">${p.eslesmeyenBirim} birim katalogda eşleşmedi</span>` : '') +
-      ` · <button class="sm" id="btnProsedurKaldir">Kaldır</button>`
-    : 'Yüklenmedi. Yüklerseniz model, işle ilgili mevcut prosedürleri de gösterir ve ekip kararında kanıt olarak kullanır.';
+      dbDugme + (p.kaynak === 'Excel' ? ` <button class="sm" id="btnProsedurKaldir">Kaldır</button>` : '')
+    : (p.veritabaniOkunuyor ? 'Prosedürler veritabanından okunuyor…' : 'Yüklenmedi. Yüklerseniz model, işle ilgili mevcut prosedürleri de gösterir ve ekip kararında kanıt olarak kullanır.') + dbDugme;
+  if (p.veritabaniOkunuyor) setTimeout(prosedurBilgisiAl, 2000);
 }
 function prosedurBilgisiAl() { fetch('/api/prosedur').then(r => r.json()).then(prosedurGoster).catch(() => {}); }
 $('#prosedurDurum').addEventListener('click', async e => {
-  if (e.target.id !== 'btnProsedurKaldir') return;
-  prosedurGoster(await (await fetch('/api/prosedur', { method: 'DELETE' })).json());
+  if (e.target.id === 'btnProsedurKaldir') return prosedurGoster(await (await fetch('/api/prosedur', { method: 'DELETE' })).json());
+  if (e.target.id !== 'btnProsedurDb') return;
+  e.target.disabled = true; e.target.textContent = 'Veritabanından okunuyor…';
+  $('#katalogHata').textContent = '';
+  try {
+    const r = await fetch('/api/prosedur/veritabani', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.hata || r.statusText);
+    prosedurGoster(j);
+  } catch (err) { $('#katalogHata').textContent = 'Hata: ' + err.message; prosedurBilgisiAl(); }
 });
 async function prosedurYukle(f) {
   if (!f) return;

@@ -4,7 +4,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using AppRel;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Negotiate;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,9 +20,20 @@ if (string.IsNullOrWhiteSpace(yzAyar.QwenApiUrl)) yzAyar.QwenApiUrl = builder.Co
 if (string.IsNullOrWhiteSpace(yzAyar.QwenApiKey)) yzAyar.QwenApiKey = builder.Configuration["QwenApiKey"] ?? "";
 var excelAyar = builder.Configuration.GetSection("ExcelAyarlari").Get<ExcelAyarlari>() ?? new ExcelAyarlari();
 
+// Yetki kontrolü: AppSettings:YetkiKontrolu = true ise Windows kimliği alınır ve DokuPanel'den yetki sorulur (AuthHelper)
+bool yetkiKontrolu = builder.Configuration.GetValue<bool>("AppSettings:YetkiKontrolu");
+int yetkiOnbellekDakika = builder.Configuration.GetValue<int?>("AppSettings:YetkiOnbellekDakika") ?? 10;
+if (yetkiKontrolu)
+{
+    // IIS'te Windows kimlik doğrulamasını IIS yapar; Kestrel'de (dotnet run) Negotiate devreye girer
+    builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate();
+    builder.Services.AddAuthorization();
+}
+
 builder.Services.AddSingleton(yzAyar);
 builder.Services.AddSingleton(excelAyar);
 builder.Services.AddSingleton(builder.Configuration.GetSection("KatalogVeritabani").Get<KatalogVeritabaniAyarlari>() ?? new KatalogVeritabaniAyarlari());
+builder.Services.AddSingleton(builder.Configuration.GetSection("ProsedurVeritabani").Get<ProsedurVeritabaniAyarlari>() ?? new ProsedurVeritabaniAyarlari());
 builder.Services.AddSingleton<IsYoneticisi>();
 builder.Services.AddHttpClient("InsecureClient", c => c.Timeout = TimeSpan.FromMinutes(yzAyar.ZamanAsimiDakika))
     .ConfigurePrimaryHttpMessageHandler(() => yzAyar.SertifikaDogrulamasiniAtla
@@ -29,10 +43,43 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping);
 
 var app = builder.Build();
+
+if (yetkiKontrolu)
+{
+    app.UseAuthentication();
+    // Sayfa birkaç saniyede bir durum sorduğu için DokuPanel her istekte değil, kullanıcı başına belirli aralıklarla sorulur
+    var yetkiOnbellegi = new ConcurrentDictionary<string, (bool yetkili, DateTime zaman, string hata)>(StringComparer.OrdinalIgnoreCase);
+    app.Use(async (context, next) =>
+    {
+        if (context.User?.Identity?.IsAuthenticated != true)
+        {
+            await context.ChallengeAsync(NegotiateDefaults.AuthenticationScheme);
+            return;
+        }
+        var kullanici = context.User.Identity!.Name ?? "";
+        if (!yetkiOnbellegi.TryGetValue(kullanici, out var kayit) || kayit.zaman < DateTime.Now.AddMinutes(-yetkiOnbellekDakika))
+        {
+            var yetkili = await AuthHelper.YetkiKontrol(context, app.Configuration);
+            kayit = (yetkili, DateTime.Now, context.Items["AuthHata"] as string ?? "");
+            yetkiOnbellegi[kullanici] = kayit;
+            if (!yetkili) app.Logger.LogWarning("Yetkisiz erişim: {Kullanici} - {Hata}", kullanici, kayit.hata);
+        }
+        if (kayit.yetkili) { await next(); return; }
+
+        if (context.Request.Path.StartsWithSegments("/api"))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { hata = "Bu uygulamayı kullanma yetkiniz yok." });
+            return;
+        }
+        await AuthHelper.YetkisizErisimSayfasi(kullanici, kayit.hata).ExecuteAsync(context);
+    });
+}
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/api/ayarlar", (YzAyarlari a, ExcelAyarlari e) => new
+app.MapGet("/api/ayarlar", (HttpContext ctx, YzAyarlari a, ExcelAyarlari e) => new
 {
     model = a.AiModel,
     paralellik = a.Paralellik,
@@ -42,7 +89,8 @@ app.MapGet("/api/ayarlar", (YzAyarlari a, ExcelAyarlari e) => new
     maksEkipSayisi = a.MaksEkipSayisi,
     kullaniciEkipKolonu = e.KullaniciEkipKolonu,
     kullaniciNotKolonu = e.KullaniciNotKolonu,
-    apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl)
+    apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl),
+    kullanici = ctx.User?.Identity?.IsAuthenticated == true ? ctx.User.Identity.Name : null
 });
 
 app.MapGet("/api/katalog", (IsYoneticisi yonetici) => yonetici.KatalogBilgisi());
@@ -84,6 +132,19 @@ app.MapPost("/api/prosedur", async (HttpRequest req, IsYoneticisi yonetici) =>
     try
     {
         yonetici.ProsedurYukle(await OkuAsync(dosya), dosya.FileName);
+        return Results.Ok(yonetici.ProsedurBilgisi());
+    }
+    catch (ExcelOkumaHatasi ex)
+    {
+        return Results.BadRequest(new { hata = ex.Message });
+    }
+});
+
+app.MapPost("/api/prosedur/veritabani", (IsYoneticisi yonetici) =>
+{
+    try
+    {
+        yonetici.ProsedurVeritabanindanYukle();
         return Results.Ok(yonetici.ProsedurBilgisi());
     }
     catch (ExcelOkumaHatasi ex)
@@ -169,6 +230,24 @@ static async Task<byte[]> OkuAsync(IFormFile dosya)
 // =====================================================================
 
 record MetinSorusu(string? Metin, bool HerSatirAyriMadde);
+
+class ProsedurVeritabaniAyarlari
+{
+    /// SQL Server bağlantı metni (doku veritabanı). Boşsa prosedür listesi yalnızca Excel'den yüklenir.
+    public string BaglantiMetni { get; set; } = "";
+    public string Tablo { get; set; } = "[doku].[dbo].[prosedur]";
+    /// İsteğe bağlı WHERE koşulu (WHERE yazmadan). Durum = False olanlar zaten atlanır.
+    public string Filtre { get; set; } = "";
+    /// Doluysa Tablo/Filtre yerine bu sorgu çalışır ([Doküman Adı] ve [Süreç Sahibi Birim] zorunlu)
+    public string Sorgu { get; set; } = "";
+    public int ZamanAsimiSaniye { get; set; } = 60;
+
+    public bool Tanimli => !string.IsNullOrWhiteSpace(BaglantiMetni);
+
+    public string SorguMetni() => !string.IsNullOrWhiteSpace(Sorgu) ? Sorgu :
+        "SELECT [Kurum İçi Mevzuat Tipi], [Kod], [Doküman Kodu], [Doküman Adı], [Süreç Sahibi Birim], [Süreç Modeli], [Durum], [Link] " +
+        $"FROM {Tablo}" + (string.IsNullOrWhiteSpace(Filtre) ? "" : $" WHERE {Filtre}");
+}
 
 class KatalogVeritabaniAyarlari
 {
@@ -280,7 +359,7 @@ class Prosedur
     public string Ad { get; init; } = "";
     public string Birim { get; init; } = "";
     public string SurecModeli { get; init; } = "";
-    public string Link { get; init; } = "";
+    public string Link { get; set; } = "";
     /// Prompt'ta ve yanıtta kullanılan kimlik: Doküman Kodu, yoksa Kod
     public string Kimlik => DokumanKodu.Length > 0 ? DokumanKodu : Kod;
 }
@@ -806,6 +885,49 @@ static class ExcelIslemleri
         return new Katalog(servisler);
     }
 
+    static bool PasifMi(string durum) => Metin.Normalize(durum) is "false" or "0" or "pasif" or "hayir" or "yururlukten kalkti";
+
+    /// Prosedür listesini SQL Server'dan okur (kolonlar adlarına göre bulunur; Türkçe karakter/boşluk farkı önemsizdir)
+    public static List<Prosedur> ProsedurVeritabanindanOku(ProsedurVeritabaniAyarlari db)
+    {
+        var liste = new List<Prosedur>();
+        try
+        {
+            using var baglanti = new Microsoft.Data.SqlClient.SqlConnection(db.BaglantiMetni);
+            baglanti.Open();
+            using var komut = new Microsoft.Data.SqlClient.SqlCommand(db.SorguMetni(), baglanti) { CommandTimeout = db.ZamanAsimiSaniye };
+            using var okuyucu = komut.ExecuteReader();
+
+            var kolonlar = Enumerable.Range(0, okuyucu.FieldCount).Select(i => (i, ad: Metin.Normalize(okuyucu.GetName(i)))).ToList();
+            int Kolon(Func<string, bool> kosul) => kolonlar.FirstOrDefault(k => kosul(k.ad)) is { ad: not null } k ? k.i : -1;
+            int tip = Kolon(a => a.Contains("mevzuat tipi") || a == "tip"), kod = Kolon(a => a == "kod"), dkod = Kolon(a => a.Contains("dokuman kodu")),
+                ad = Kolon(a => a.Contains("dokuman adi")), birim = Kolon(a => a.Contains("surec sahibi") || a.Contains("birim")),
+                model = Kolon(a => a.Contains("surec modeli")), durum = Kolon(a => a == "durum"), link = Kolon(a => a.Contains("link"));
+            if (ad < 0 || birim < 0)
+                throw new ExcelOkumaHatasi("Prosedür sorgusu [Doküman Adı] ve [Süreç Sahibi Birim] kolonlarını döndürmelidir.");
+
+            string Al(int i) => i >= 0 && !okuyucu.IsDBNull(i)
+                ? Regex.Replace(Convert.ToString(okuyucu.GetValue(i), CultureInfo.InvariantCulture) ?? "", @"\s+", " ").Trim() : "";
+            while (okuyucu.Read())
+            {
+                if (Al(ad).Length == 0 || (durum >= 0 && PasifMi(Al(durum)))) continue;
+                // Link yalnızca gridde koda tıklamak için; gerçek adres yoksa boş kalır
+                var linkMetni = Al(link);
+                liste.Add(new Prosedur
+                {
+                    Tip = Al(tip), Kod = Al(kod), DokumanKodu = Al(dkod), Ad = Al(ad), Birim = Al(birim), SurecModeli = Al(model),
+                    Link = linkMetni.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? linkMetni : ""
+                });
+            }
+        }
+        catch (Microsoft.Data.SqlClient.SqlException ex)
+        {
+            throw new ExcelOkumaHatasi($"Prosedür listesi veritabanından okunamadı: {ex.Message}");
+        }
+        if (liste.Count == 0) throw new ExcelOkumaHatasi("Prosedür tablosunda geçerli (Durum = True) satır bulunamadı.");
+        return liste;
+    }
+
     public static List<Prosedur> ProsedurOku(byte[] bytes, ExcelAyarlari ayar)
     {
         using var wb = Ac(bytes, "Prosedür listesi");
@@ -838,7 +960,7 @@ static class ExcelIslemleri
             var r = ws.Row(i);
             if (Al(r, ad).Length == 0) continue;
             // Pasif dokümanlar alınmaz
-            if (durum != 0 && Metin.Normalize(Al(r, durum)) is "false" or "0" or "pasif" or "hayir" or "yururlukten kalkti") continue;
+            if (durum != 0 && PasifMi(Al(r, durum))) continue;
             liste.Add(new Prosedur
             {
                 Tip = Al(r, tip), Kod = Al(r, kod), DokumanKodu = Al(r, dkod), Ad = Al(r, ad),
@@ -1309,14 +1431,17 @@ class IsYoneticisi
     ProsedurKutuphanesi? kutuphane;   // katalog veya prosedür listesi değişince yeniden kurulur
 
     readonly KatalogVeritabaniAyarlari db;
+    readonly ProsedurVeritabaniAyarlari prosedurDb;
+    string prosedurKaynak = "";
+    volatile bool prosedurOkunuyor;
     string katalogKaynak = "";                       // "Excel" veya "Veritabanı"
     Dictionary<string, int> katalogDurumlari = [];
     volatile bool veritabaniOkunuyor;
 
     public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env,
-        KatalogVeritabaniAyarlari db)
+        KatalogVeritabaniAyarlari db, ProsedurVeritabaniAyarlari prosedurDb)
     {
-        (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db) = (ayar, excelAyar, httpFactory, log, db);
+        (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db, this.prosedurDb) = (ayar, excelAyar, httpFactory, log, db, prosedurDb);
         var klasor = Path.Combine(env.ContentRootPath, "veri");
         katalogYolu = Path.Combine(klasor, "son_katalog.xlsx");
         katalogAdYolu = Path.Combine(klasor, "son_katalog_adi.txt");
@@ -1329,6 +1454,7 @@ class IsYoneticisi
                 prosedurler = ExcelIslemleri.ProsedurOku(File.ReadAllBytes(prosedurYolu), excelAyar);
                 prosedurAdi = File.Exists(prosedurAdYolu) ? File.ReadAllText(prosedurAdYolu).Trim() : "son_prosedur.xlsx";
                 prosedurZamani = File.GetLastWriteTime(prosedurYolu);
+                prosedurKaynak = "Excel";
             }
             catch (Exception ex) { log.LogWarning("Kayıtlı prosedür listesi okunamadı: {Hata}", ex.Message); }
         }
@@ -1344,6 +1470,8 @@ class IsYoneticisi
             catch (Exception ex) { log.LogWarning("Kayıtlı katalog okunamadı: {Hata}", ex.Message); }
         }
         // Veritabanı tanımlıysa açılışta katalog oradan (arka planda) yenilenir; olmazsa son Excel katalogu kullanılır
+        prosedurOkunuyor = prosedurDb.Tanimli;
+        if (prosedurDb.Tanimli) _ = Task.Run(() => { try { ProsedurVeritabanindanYukle(); } catch (Exception ex) { prosedurOkunuyor = false; log.LogWarning("Prosedürler veritabanından okunamadı: {Hata}", ex.Message); } });
         veritabaniOkunuyor = db.Tanimli;
         if (db.Tanimli) _ = Task.Run(() => { try { KatalogVeritabanindanYukle(); } catch (Exception ex) { log.LogWarning("Katalog veritabanından okunamadı: {Hata}", ex.Message); } });
     }
@@ -1392,13 +1520,29 @@ class IsYoneticisi
         catch (Exception ex) { log.LogWarning("Katalog diske yazılamadı: {Hata}", ex.Message); }
     }
 
+    public void ProsedurVeritabanindanYukle()
+    {
+        if (!prosedurDb.Tanimli) throw new ExcelOkumaHatasi("appsettings.json: ProsedurVeritabani:BaglantiMetni tanımlı değil.");
+        prosedurOkunuyor = true;
+        try
+        {
+            var yeni = ExcelIslemleri.ProsedurVeritabanindanOku(prosedurDb);
+            (prosedurler, prosedurAdi, prosedurZamani, kutuphane, prosedurKaynak) = (yeni, prosedurDb.Tablo, DateTime.Now, null, "Veritabanı");
+            log.LogInformation("Prosedürler veritabanından okundu: {Adet}", yeni.Count);
+        }
+        finally { prosedurOkunuyor = false; }
+    }
+
     public object ProsedurBilgisi()
     {
-        if (prosedurler is null) return new { var = false };
+        if (prosedurler is null) return new { var = false, veritabaniTanimli = prosedurDb.Tanimli, veritabaniOkunuyor = prosedurOkunuyor };
         var k = AktifKutuphane();
         return new
         {
             var = true,
+            veritabaniTanimli = prosedurDb.Tanimli,
+            veritabaniOkunuyor = prosedurOkunuyor,
+            kaynak = prosedurKaynak,
             dosyaAdi = prosedurAdi,
             yuklenme = prosedurZamani,
             prosedurSayisi = prosedurler.Count,
@@ -1410,7 +1554,7 @@ class IsYoneticisi
     public void ProsedurYukle(byte[] bytes, string dosyaAdi)
     {
         var yeni = ExcelIslemleri.ProsedurOku(bytes, excelAyar);
-        (prosedurler, prosedurAdi, prosedurZamani, kutuphane) = (yeni, dosyaAdi, DateTime.Now, null);
+        (prosedurler, prosedurAdi, prosedurZamani, kutuphane, prosedurKaynak) = (yeni, dosyaAdi, DateTime.Now, null, "Excel");
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(prosedurYolu)!);
