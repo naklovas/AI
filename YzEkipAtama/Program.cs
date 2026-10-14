@@ -43,6 +43,10 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping);
 
 var app = builder.Build();
+app.Logger.LogWarning(yetkiKontrolu
+    ? "Yetki kontrolü AÇIK: site '{Site}' için DokuPanel'e sorulacak ({Url})"
+    : "Yetki kontrolü KAPALI (AppSettings:YetkiKontrolu = false veya tanımsız): sayfa herkese açık",
+    app.Configuration["AppSettings:CurrentSiteName"], app.Configuration["AppSettings:DokuPanelApiUrl"]);
 
 if (yetkiKontrolu)
 {
@@ -90,7 +94,8 @@ app.MapGet("/api/ayarlar", (HttpContext ctx, YzAyarlari a, ExcelAyarlari e) => n
     kullaniciEkipKolonu = e.KullaniciEkipKolonu,
     kullaniciNotKolonu = e.KullaniciNotKolonu,
     apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl),
-    kullanici = ctx.User?.Identity?.IsAuthenticated == true ? ctx.User.Identity.Name : null
+    kullanici = ctx.User?.Identity?.IsAuthenticated == true ? ctx.User.Identity.Name : null,
+    yetkiKontrolu
 });
 
 app.MapGet("/api/katalog", (IsYoneticisi yonetici) => yonetici.KatalogBilgisi());
