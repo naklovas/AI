@@ -232,7 +232,7 @@ let isId = null, veri = null, zamanlayici = null, sirala = { k: 'satirNo', azala
 // ---------- ayarlar ----------
 fetch('/api/ayarlar').then(r => r.json()).then(a => {
   $('#yetkiUyari').classList.toggle('gizli', a.yetkiKontrolu);
-  $('#meta').textContent = (a.kullanici ? `${a.kullanici} · ` : '') + `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#meta').textContent = (a.kullanici ? `${a.kullanici}${a.yetkiKontrolu ? ` (DokuPanel: ${a.yetkiSitesi})` : ''} · ` : '') + `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 

@@ -66,7 +66,8 @@ if (yetkiKontrolu)
             var yetkili = await AuthHelper.YetkiKontrol(context, app.Configuration);
             kayit = (yetkili, DateTime.Now, context.Items["AuthHata"] as string ?? "");
             yetkiOnbellegi[kullanici] = kayit;
-            if (!yetkili) app.Logger.LogWarning("Yetkisiz erişim: {Kullanici} - {Hata}", kullanici, kayit.hata);
+            if (yetkili) app.Logger.LogInformation("Yetki VERİLDİ: {Kullanici} (DokuPanel, site '{Site}')", kullanici, app.Configuration["AppSettings:CurrentSiteName"]);
+            else app.Logger.LogWarning("Yetki REDDEDİLDİ: {Kullanici} - {Hata}", kullanici, kayit.hata);
         }
         if (kayit.yetkili) { await next(); return; }
 
@@ -95,7 +96,8 @@ app.MapGet("/api/ayarlar", (HttpContext ctx, YzAyarlari a, ExcelAyarlari e) => n
     kullaniciNotKolonu = e.KullaniciNotKolonu,
     apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl),
     kullanici = ctx.User?.Identity?.IsAuthenticated == true ? ctx.User.Identity.Name : null,
-    yetkiKontrolu
+    yetkiKontrolu,
+    yetkiSitesi = yetkiKontrolu ? app.Configuration["AppSettings:CurrentSiteName"] : null
 });
 
 app.MapGet("/api/katalog", (IsYoneticisi yonetici) => yonetici.KatalogBilgisi());
