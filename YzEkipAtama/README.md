@@ -4,7 +4,7 @@
 
 Yapay zeka geliştirme sürecinin aksiyon/kontrol maddelerini, servis kataloğuna bakarak kurum içi YZ modeline sorar ve her madde için **işi yapması gereken ekip(ler)i ve görevlerini**, ayrıca **kararın gerekçesini** önerir.
 
-Proje `Program.cs` (.NET 8 minimal API), `AuthHelper.cs` ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid; açık/koyu tema) dosyalarından oluşur. Servis kataloğu ve prosedürler SQL Server'dan okunur; analiz işleri bellekte tutulur ve 12 saat sonra silinir.
+Proje `Program.cs` (.NET 10 minimal API), `AuthHelper.cs` ve `wwwroot/index.html` (dış kütüphane kullanmayan, filtreli bir grid; açık/koyu tema) dosyalarından oluşur. Servis kataloğu ve prosedürler SQL Server'dan okunur; analiz işleri bellekte tutulur ve 12 saat sonra silinir.
 
 ## Çalıştırma
 
@@ -34,6 +34,16 @@ Uygulama `http://localhost:5080` adresinde açılır.
 | `ServisAciklamasiGonder` / `ServisAciklamaMaksKarakter` | Katalogdaki servis açıklamaları (`SERVIS_ACIKLAMASI`) servis adının yanında gönderilir; her biri en fazla bu kadar karakter (`0` = tamamı). Prompt'u en çok büyüten ayar budur; sayfadaki "Prompt boyutu" kutusundan izleyin. |
 | `DenemeSayisi` | Hata alındığında veya yanıt ayrıştırılamadığında toplam deneme sayısı |
 | `ExcelAyarlari:KontrolKolonu / TahminiEkipKolonu` | Kontrol listesi kolonları (varsayılan A = Kontrol, B = Tahmini Ekip). Tahmini ekip boş olabilir; modele **yalnızca ipucu** olarak gider. |
+
+## Sunucuya yayın (IIS)
+
+Sunucuda **.NET 10 Hosting Bundle** kurulu olmalıdır. Visual Studio'da **Yayımla → Sunucu** profilini (`Properties/PublishProfiles/Sunucu.pubxml`) kullanın ya da komut satırından:
+
+```cmd
+dotnet publish -c Release -p:PublishProfile=Sunucu
+```
+
+Çıktı `bin\Release\net10.0\publish\` klasörüne çıkar. IIS uygulama havuzunda ".NET CLR Version" = **No Managed Code** olmalıdır. Yetki kontrolü kullanılıyorsa sitede **Windows Authentication** açık olmalıdır.
 
 ## Kullanım
 
