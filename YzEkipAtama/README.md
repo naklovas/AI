@@ -1,4 +1,6 @@
-# YZ Ekip Atama
+# ATAMAN · YZ Ekip Atama
+
+<img src="wwwroot/ataman-logo.svg" alt="ATAMAN" width="360">
 
 Yapay zeka geliştirme sürecinin aksiyon/kontrol maddelerini, servis kataloğuna bakarak kurum içi YZ modeline sorar ve her madde için **işi yapması gereken ekip(ler)i ve görevlerini**, ayrıca **kararın gerekçesini** önerir.
 

@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YZ Ekip Atama</title>
+<title>ATAMAN · YZ Ekip Atama</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <script>try { const t = localStorage.getItem('yzTema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}</script>
 <style>
 :root{
@@ -28,7 +29,13 @@
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
 header{background:var(--panel);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-header h1{font-size:18px;margin:0;font-weight:600}
+header h1{font-size:21px;margin:0;font-weight:800;letter-spacing:.18em;line-height:1.1;
+  background:linear-gradient(90deg,#2563eb,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent}
+:root[data-theme="dark"] header h1{background-image:linear-gradient(90deg,#60a5fa,#a78bfa)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) header h1{background-image:linear-gradient(90deg,#60a5fa,#a78bfa)}}
+.marka{display:flex;align-items:center;gap:11px}
+.marka img{display:block;filter:drop-shadow(0 2px 6px rgba(79,70,229,.35))}
+.marka span{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 header .meta{color:var(--muted);font-size:12px;margin-left:auto}
 main{padding:20px 24px;max-width:1800px;margin:0 auto}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
@@ -114,7 +121,10 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 </head>
 <body>
 <header>
-  <h1>YZ Geliştirme Süreci · Ekip Atama</h1>
+  <div class="marka">
+    <img src="favicon.svg" alt="" width="40" height="40">
+    <div><h1>ATAMAN</h1><span>YZ Süreçleri · Ekip Atama</span></div>
+  </div>
   <div class="meta" id="meta">Ayarlar yükleniyor…</div>
   <div class="tema" id="tema" title="Tema">
     <button data-tema="system">Sistem</button><button data-tema="light">Açık</button><button data-tema="dark">Koyu</button>

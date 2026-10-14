@@ -180,7 +180,7 @@ app.MapPost("/api/is/{id}/satir/{sira:int}/yeniden", (string id, int sira, IsYon
 app.MapGet("/api/is/{id}/excel", (string id, IsYoneticisi yonetici, ExcelAyarlari e) =>
 {
     if (yonetici.Getir(id) is not { } analiz) return Results.NotFound();
-    var dosyaAdi = Path.GetFileNameWithoutExtension(analiz.DosyaAdi) + "_YZ_Ekip_Atama.xlsx";
+    var dosyaAdi = Path.GetFileNameWithoutExtension(analiz.DosyaAdi) + "_ATAMAN.xlsx";
     return Results.File(ExcelIslemleri.SonucYaz(analiz, e),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", dosyaAdi);
 });

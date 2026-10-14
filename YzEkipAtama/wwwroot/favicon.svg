@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>ATAMAN</title>
+  <defs>
+    <linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- Altıgen rozet -->
+  <path d="M32 5 L55 18 V46 L32 59 L9 46 V18 Z" fill="url(#ag)" stroke="url(#ag)" stroke-width="6" stroke-linejoin="round"/>
+  <!-- Ağdan oluşan "A": tepe = iş, alt düğümler = ekipler, orta bağ = atama -->
+  <g stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none">
+    <path d="M32 17 L19.5 45"/>
+    <path d="M32 17 L44.5 45"/>
+    <path d="M24.5 34 H39.5"/>
+  </g>
+  <circle cx="32" cy="17" r="5.5" fill="#fff"/>
+  <circle cx="32" cy="17" r="2.4" fill="#7c3aed"/>
+  <circle cx="19.5" cy="45" r="4.5" fill="#fff"/>
+  <circle cx="44.5" cy="45" r="4.5" fill="#fff"/>
+  <circle cx="32" cy="34" r="3.2" fill="#fbbf24"/>
+</svg>
