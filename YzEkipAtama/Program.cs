@@ -92,8 +92,8 @@ app.MapGet("/api/ayarlar", (HttpContext ctx, YzAyarlari a, ExcelAyarlari e) => n
     adayEkipSayisi = a.AdayEkipSayisi,
     servisAciklamasi = a.ServisAciklamasiGonder ? (a.ServisAciklamaMaksKarakter > 0 ? $"ilk {a.ServisAciklamaMaksKarakter} karakter" : "tamamı") : "gönderilmiyor",
     maksEkipSayisi = a.MaksEkipSayisi,
-    kullaniciEkipKolonu = e.KullaniciEkipKolonu,
-    kullaniciNotKolonu = e.KullaniciNotKolonu,
+    kontrolKolonu = e.KontrolKolonu,
+    tahminiEkipKolonu = e.TahminiEkipKolonu,
     apiTanimli = !string.IsNullOrWhiteSpace(a.QwenApiUrl),
     kullanici = ctx.User?.Identity?.IsAuthenticated == true ? ctx.User.Identity.Name : null,
     yetkiKontrolu,
@@ -279,8 +279,9 @@ class YzAyarlari
 
 class ExcelAyarlari
 {
-    public string KullaniciEkipKolonu { get; set; } = "E";
-    public string KullaniciNotKolonu { get; set; } = "F";
+    /// Kontrol listesi: A = Kontrol, B = Tahmini Ekip (boş olabilir; modele yalnızca ipucu olarak gider)
+    public string KontrolKolonu { get; set; } = "A";
+    public string TahminiEkipKolonu { get; set; } = "B";
     public string CiktiEkipBasligi { get; set; } = "YZ Önerilen Ekipler ve Görevleri";
     public string CiktiGerekceBasligi { get; set; } = "YZ Karar Gerekçesi";
     public string CiktiProsedurBasligi { get; set; } = "YZ İlgili Mevcut Prosedürler";
@@ -861,48 +862,41 @@ static class ExcelIslemleri
         return liste;
     }
 
+    /// Kontrol listesi: A = Kontrol (zorunlu), B = Tahmini Ekip (boş olabilir).
+    /// İlk satır başlıksa ("Kontrol", "Tahmini Ekip" vb.) atlanır; değilse ilk satırdan itibaren veri okunur.
     public static KontrolDosyasi KontrolOku(byte[] bytes, ExcelAyarlari ayar)
     {
         using var wb = Ac(bytes, "Kontrol listesi");
-        var bulunan = BaslikBul(wb, b => b.Any(x => x.Contains("aksiyon") || x.Contains("kontrol")) && b.Count >= 2)
-            ?? throw new ExcelOkumaHatasi("Kontrol listesinde 'Aksiyon / Kontrol' başlığı bulunamadı.");
-        var (ws, baslik) = bulunan;
+        var ws = wb.Worksheets.FirstOrDefault(w => w.LastRowUsed() is not null)
+            ?? throw new ExcelOkumaHatasi("Kontrol listesi boş.");
+        int kontrolKolon = KolonNo(ayar.KontrolKolonu), ekipKolon = KolonNo(ayar.TahminiEkipKolonu);
 
-        int ekipKolon = KolonNo(ayar.KullaniciEkipKolonu), notKolon = KolonNo(ayar.KullaniciNotKolonu);
-        var cikti1Norm = Metin.Normalize(ayar.CiktiEkipBasligi);
-        var cikti2Norm = Metin.Normalize(ayar.CiktiGerekceBasligi);
-        var cikti3Norm = Metin.Normalize(ayar.CiktiProsedurBasligi);
+        var ilkKontrol = Metin.Normalize(Deger(ws.Cell(1, kontrolKolon)));
+        var ilkEkip = Metin.Normalize(Deger(ws.Cell(1, ekipKolon)));
+        bool basliklı = ilkEkip.Contains("tahmin") || ilkEkip.Contains("ekip") ||
+                        ilkKontrol is "kontrol" or "kontroller" or "aksiyon" or "aksiyon kontrol" or "madde" or "is" ||
+                        (ilkKontrol.Length <= 25 && (ilkKontrol.Contains("kontrol") || ilkKontrol.Contains("aksiyon")));
+        int baslik = basliklı ? 1 : 0;
 
-        var basliklar = ws.Row(baslik).CellsUsed().ToDictionary(c => c.Address.ColumnNumber, c => Deger(c));
-        int sonKolon = Math.Max(basliklar.Keys.DefaultIfEmpty(1).Max(), notKolon);
-
-        // Dosya daha önce bu programdan çıkmışsa çıktı kolonlarını yeniden kullan
-        int cikti1 = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value) == cikti1Norm).Key;
-        int cikti2 = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value) == cikti2Norm).Key;
+        // Dosya daha önce bu programdan çıkmışsa çıktı kolonlarını yeniden kullan; yoksa B'den sonraya yaz
+        var basliklar = baslik == 0 ? [] : ws.Row(1).CellsUsed().ToDictionary(c => c.Address.ColumnNumber, c => Metin.Normalize(Deger(c)));
+        int Bul(string ad) => basliklar.FirstOrDefault(b => b.Value == Metin.Normalize(ad)).Key;
+        int sonKolon = Math.Max(Math.Max(kontrolKolon, ekipKolon), basliklar.Keys.Where(k => basliklar[k] is var v &&
+            v != Metin.Normalize(ayar.CiktiEkipBasligi) && v != Metin.Normalize(ayar.CiktiGerekceBasligi) && v != Metin.Normalize(ayar.CiktiProsedurBasligi))
+            .DefaultIfEmpty(0).Max());
+        int cikti1 = Bul(ayar.CiktiEkipBasligi), cikti2 = Bul(ayar.CiktiGerekceBasligi), cikti3 = Bul(ayar.CiktiProsedurBasligi);
         if (cikti1 == 0) cikti1 = sonKolon + 1;
         if (cikti2 == 0) cikti2 = Math.Max(sonKolon, cikti1) + 1;
-        int cikti3 = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value) == cikti3Norm).Key;
         if (cikti3 == 0) cikti3 = Math.Max(sonKolon, Math.Max(cikti1, cikti2)) + 1;
 
-        var haric = new HashSet<int> { ekipKolon, notKolon, cikti1, cikti2, cikti3 };
-        var aksiyonKolon = basliklar.Where(b => !haric.Contains(b.Key))
-            .OrderByDescending(b => Metin.Normalize(b.Value).Contains("aksiyon") ? 2 : Metin.Normalize(b.Value).Contains("kontrol") ? 1 : 0)
-            .First().Key;
-        var altKategoriKolon = basliklar.FirstOrDefault(b => Metin.Normalize(b.Value).Contains("alt kategori")).Key;
-        var bilgiKolonlari = basliklar.Keys.Where(k => !haric.Contains(k) && k != aksiyonKolon && k != altKategoriKolon).OrderBy(k => k).ToList();
-
         var satirlar = new List<KontrolSatiri>();
-        var sonSatir = ws.LastRowUsed()?.RowNumber() ?? baslik;
+        var sonSatir = ws.LastRowUsed()?.RowNumber() ?? 0;
         for (int i = baslik + 1; i <= sonSatir; i++)
         {
-            var r = ws.Row(i);
-            var aksiyon = Deger(r.Cell(aksiyonKolon));
-            if (aksiyon.Length == 0) continue;
-            var altKategori = altKategoriKolon == 0 ? "" : Deger(r.Cell(altKategoriKolon));
-            var alanlar = bilgiKolonlari
-                .Select(k => new KeyValuePair<string, string>(string.IsNullOrEmpty(basliklar[k]) ? $"Kolon {XLHelper.GetColumnLetterFromNumber(k)}" : basliklar[k], Deger(r.Cell(k))))
-                .Where(kv => kv.Value.Length > 0).ToList();
-            var maddeler = ayar.HucreMaddeleriniAyir ? MaddeAyirici.Ayir(aksiyon) : [aksiyon];
+            var kontrol = Deger(ws.Cell(i, kontrolKolon));
+            if (kontrol.Length == 0) continue;
+            var tahminiEkip = Deger(ws.Cell(i, ekipKolon));
+            var maddeler = ayar.HucreMaddeleriniAyir ? MaddeAyirici.Ayir(kontrol) : [kontrol];
             for (int j = 0; j < maddeler.Count; j++)
             {
                 satirlar.Add(new KontrolSatiri
@@ -912,15 +906,13 @@ static class ExcelIslemleri
                     Aksiyon = maddeler[j],
                     AltNo = j + 1,
                     AltToplam = maddeler.Count,
-                    HucreMetni = maddeler.Count > 1 ? aksiyon : "",
-                    AltKategori = altKategori,
-                    Alanlar = alanlar,
-                    KullaniciEkip = Deger(r.Cell(ekipKolon)),
-                    KullaniciNot = Deger(r.Cell(notKolon))
+                    HucreMetni = maddeler.Count > 1 ? kontrol : "",
+                    KullaniciEkip = tahminiEkip
                 });
             }
         }
-        if (satirlar.Count == 0) throw new ExcelOkumaHatasi("Kontrol listesinde 'Aksiyon / Kontrol' kolonu dolu hiç satır bulunamadı.");
+        if (satirlar.Count == 0)
+            throw new ExcelOkumaHatasi($"Kontrol listesinde {ayar.KontrolKolonu} kolonunda (Kontrol) dolu satır bulunamadı.");
 
         return new KontrolDosyasi
         {
@@ -973,12 +965,23 @@ static class ExcelIslemleri
         var k = analiz.Kontrol;
         var ws = wb.Worksheet(k.SayfaAdi);
 
+        // Başlıksız dosyaya en üste başlık satırı eklenir; veri satırları bir aşağı kayar
+        int kayma = 0, baslikSatiri = k.BaslikSatiri;
+        if (baslikSatiri == 0)
+        {
+            ws.Row(1).InsertRowsAbove(1);
+            (kayma, baslikSatiri) = (1, 1);
+            ws.Cell(1, KolonNo(ayar.KontrolKolonu)).Value = "Kontrol";
+            ws.Cell(1, KolonNo(ayar.TahminiEkipKolonu)).Value = "Tahmini Ekip";
+            ws.Row(1).Style.Font.Bold = true;
+        }
+
         var kolonlar = new List<(int kolon, string baslik, double genislik)> { (k.CiktiEkipKolonu, ayar.CiktiEkipBasligi, 70.0), (k.CiktiGerekceKolonu, ayar.CiktiGerekceBasligi, 80.0) };
         if (analiz.Prosedurler is not null) kolonlar.Add((k.CiktiProsedurKolonu, ayar.CiktiProsedurBasligi, 70.0));
         foreach (var (kolon, baslikMetni, genislik) in kolonlar)
         {
-            var hucre = ws.Cell(k.BaslikSatiri, kolon);
-            if (kolon > 1) hucre.Style = ws.Cell(k.BaslikSatiri, kolon - 1).Style;
+            var hucre = ws.Cell(baslikSatiri, kolon);
+            if (kolon > 1) hucre.Style = ws.Cell(baslikSatiri, kolon - 1).Style;
             hucre.Value = baslikMetni;
             hucre.Style.Font.Bold = true;
             hucre.Style.Fill.BackgroundColor = XLColor.FromHtml("#DDEBF7");
@@ -996,7 +999,7 @@ static class ExcelIslemleri
             if (analiz.Prosedurler is not null) degerler.Add((k.CiktiProsedurKolonu, Birlestir(s => s.ProsedurMetni())));
             foreach (var (kolon, deger) in degerler)
             {
-                var hucre = ws.Cell(grup.Key, kolon);
+                var hucre = ws.Cell(grup.Key + kayma, kolon);
                 hucre.Value = deger;
                 hucre.Style.Alignment.WrapText = true;
                 hucre.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
@@ -1105,8 +1108,8 @@ static class PromptOlusturucu
 
         if (s.KullaniciEkip.Length > 0 || s.KullaniciNot.Length > 0)
         {
-            sb.AppendLine("KULLANICININ ÖN GÖRÜŞÜ (yarım kalmış bir ön çalışmadır; doğruluğu garanti değildir, YALNIZCA İPUCU olarak kullan):");
-            if (s.KullaniciEkip.Length > 0) sb.AppendLine($"- Kullanıcının düşündüğü ekipler: {s.KullaniciEkip}");
+            sb.AppendLine("KULLANICININ TAHMİNİ (doğruluğu garanti değildir, YALNIZCA İPUCU olarak kullan):");
+            if (s.KullaniciEkip.Length > 0) sb.AppendLine($"- Tahmini ekip: {s.KullaniciEkip}");
             if (s.KullaniciNot.Length > 0) sb.AppendLine($"- Mevcut süreçte var mı / nerede: {s.KullaniciNot}");
             sb.AppendLine();
         }

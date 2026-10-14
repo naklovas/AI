@@ -153,7 +153,7 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
     <div class="toplu">
       <label class="drop" id="dropKontrol">
         <b>Kontrol listesi (.xlsx)</b>
-        <span id="adKontrol">Aksiyon / Kontrol maddelerinin olduğu dosya. Tıkla veya sürükle bırak.</span>
+        <span id="adKontrol">A: Kontrol · B: Tahmini Ekip (boş olabilir). Tıkla veya sürükle bırak.</span>
         <input type="file" accept=".xlsx" id="fKontrol">
       </label>
       <div>
@@ -195,10 +195,9 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   <section class="card gizli" id="filtreKart">
     <div class="filters">
       <label>Ara<input type="search" id="fAra" placeholder="Madde, ekip, gerekçe…"></label>
-      <label>Alt kategori<select id="fAlt"><option value="">Tümü</option></select></label>
       <label>Önerilen ekip<select id="fEkip"><option value="">Tümü</option></select></label>
       <label>Rol<select id="fRol"><option value="">Sorumlu + Destek</option><option value="Sorumlu">Yalnız sorumlu</option></select></label>
-      <label>Senin görüşünle uyum<select id="fUyum"><option value="">Tümü</option><option>Aynı</option><option>Kısmi</option><option>Farklı</option><option>Eşleşmedi</option><option value="-">E kolonu boş</option></select></label>
+      <label>Tahmini ekiple uyum<select id="fUyum"><option value="">Tümü</option><option>Aynı</option><option>Kısmi</option><option>Farklı</option><option>Eşleşmedi</option><option value="-">Tahmini ekip boş</option></select></label>
       <label>Durum<select id="fDurum"><option value="">Tümü</option><option>Tamam</option><option>İşleniyor</option><option>Bekliyor</option><option>Hata</option><option>İptal</option></select></label>
       <label><span>En düşük güven: %<b id="gDeger">0</b></span><input type="range" id="fGuven" min="0" max="100" step="5" value="0"></label>
       <label><span>En yüksek güven: %<b id="gDegerMax">100</b></span><input type="range" id="fGuvenMax" min="0" max="100" step="5" value="100"></label>
@@ -211,13 +210,12 @@ textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
     <table>
       <thead><tr>
         <th data-k="satirNo">Satır</th>
-        <th data-k="altKategori">Alt Kategori</th>
         <th data-k="aksiyon" style="width:24%">Aksiyon / Kontrol</th>
         <th data-k="ekipMetni" style="width:26%">YZ Önerilen Ekipler ve Görevleri</th>
         <th data-k="gerekce" style="width:22%">YZ Karar Gerekçesi</th>
         <th data-k="prosedurMetni" class="kolProsedur" style="width:16%">İlgili Prosedürler</th>
         <th data-k="guven">Güven</th>
-        <th data-k="kullaniciEkip">Senin görüşün (E)</th>
+        <th data-k="kullaniciEkip">Tahmini Ekip</th>
         <th data-k="uyum">Uyum</th>
         <th data-k="durum">Durum</th>
         <th></th>
@@ -242,7 +240,7 @@ let isId = null, veri = null, zamanlayici = null, sirala = { k: 'satirNo', azala
 // ---------- ayarlar ----------
 fetch('/api/ayarlar').then(r => r.json()).then(a => {
   $('#yetkiUyari').classList.toggle('gizli', a.yetkiKontrolu);
-  $('#meta').textContent = (a.kullanici ? `${a.kullanici}${a.yetkiKontrolu ? ` (DokuPanel: ${a.yetkiSitesi})` : ''} · ` : '') + `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi} · İpucu kolonları: ${a.kullaniciEkipKolonu}, ${a.kullaniciNotKolonu}`;
+  $('#meta').textContent = (a.kullanici ? `${a.kullanici}${a.yetkiKontrolu ? ` (DokuPanel: ${a.yetkiSitesi})` : ''} · ` : '') + `Model: ${a.model} · Paralellik: ${a.paralellik} · Ön eleme: ${a.onElemeYap ? (a.adayEkipSayisi || 'tümü') + ' aday ekip' : 'kapalı (tüm katalog)'} · Servis açıklaması: ${a.servisAciklamasi} · Maks ekip/madde: ${a.maksEkipSayisi}`;
   $('#apiUyari').classList.toggle('gizli', a.apiTanimli);
 }).catch(() => $('#meta').textContent = 'Ayarlar okunamadı');
 
@@ -430,7 +428,7 @@ function guncelle(j) {
     stat(promptTahmini(j), 'Prompt boyutu / madde') +
     stat(tamam.filter(s => (s.guven ?? 0) < 60).length, 'Düşük güven (<60)', { fGuven: 0, fGuvenMax: 55 }) +
     (j.tur === 'Excel'
-      ? stat(say('Aynı'), 'Seninle aynı', { fUyum: 'Aynı' }) + stat(say('Kısmi'), 'Kısmen aynı', { fUyum: 'Kısmi' }) + stat(say('Farklı'), 'Farklı', { fUyum: 'Farklı' })
+      ? stat(say('Aynı'), 'Tahminle aynı', { fUyum: 'Aynı' }) + stat(say('Kısmi'), 'Tahminle kısmen aynı', { fUyum: 'Kısmi' }) + stat(say('Farklı'), 'Farklı', { fUyum: 'Farklı' })
       : '');
 
   const sayim = {};
@@ -462,13 +460,11 @@ function secenekDoldur(sel, degerler) {
 }
 function filtreleriDoldur(j, ilk) {
   const tr = (a, b) => a.localeCompare(b, 'tr');
-  if (ilk || $('#fAlt').options.length <= 1)
-    secenekDoldur($('#fAlt'), [...new Set(j.satirlar.map(s => s.altKategori).filter(Boolean))].sort(tr));
   const onerilen = new Set(j.satirlar.flatMap(s => s.ekipler.map(e => e.ekip)));
   if (onerilen.size !== $('#fEkip').options.length - 1)
     secenekDoldur($('#fEkip'), [...onerilen].sort(tr));
 }
-['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum', '#fGuven', '#fGuvenMax'].forEach(id => $(id).addEventListener('input', ciz));
+['#fAra', '#fEkip', '#fRol', '#fUyum', '#fDurum', '#fGuven', '#fGuvenMax'].forEach(id => $(id).addEventListener('input', ciz));
 // Türkçe metinde kabaca 3 karakter ≈ 1 token
 function promptTahmini(j) {
   const olcum = j.satirlar.map(s => s.promptKarakter).filter(n => n > 0);
@@ -477,7 +473,7 @@ function promptTahmini(j) {
   return '~' + Math.round(ort / 3 / 1000) + ' bin token';
 }
 function filtreTemizle() {
-  ['#fAra', '#fAlt', '#fEkip', '#fRol', '#fUyum', '#fDurum'].forEach(id => $(id).value = '');
+  ['#fAra', '#fEkip', '#fRol', '#fUyum', '#fDurum'].forEach(id => $(id).value = '');
   $('#fGuven').value = 0; $('#fGuvenMax').value = 100;
 }
 $('#btnTemizle').addEventListener('click', () => { filtreTemizle(); ciz(); });
@@ -488,12 +484,11 @@ document.querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click
 }));
 
 function filtrele() {
-  const ara = $('#fAra').value.toLocaleLowerCase('tr'), alt = $('#fAlt').value, ekip = $('#fEkip').value, rol = $('#fRol').value,
+  const ara = $('#fAra').value.toLocaleLowerCase('tr'), ekip = $('#fEkip').value, rol = $('#fRol').value,
         uyum = $('#fUyum').value, durum = $('#fDurum').value, gmin = +$('#fGuven').value, gmax = +$('#fGuvenMax').value;
   $('#gDeger').textContent = gmin; $('#gDegerMax').textContent = gmax;
   const guvenFiltreli = gmin > 0 || gmax < 100;
   return veri.satirlar.filter(s => {
-    if (alt && s.altKategori !== alt) return false;
     if (ekip && !s.ekipler.some(e => e.ekip === ekip && (!rol || e.rol === rol))) return false;
     if (uyum && (uyum === '-' ? s.kullaniciEkip : s.uyum !== uyum)) return false;
     if (durum && s.durum !== durum) return false;
@@ -555,7 +550,6 @@ function ciz() {
   $('#govde').innerHTML = satirlar.map(s => `
     <tr data-sira="${s.sira}" class="${aciklar.has(String(s.sira)) ? 'acik' : ''}">
       <td class="muted">${s.satirNo}${s.altToplam > 1 ? `<div style="font-size:11px">${s.altNo}/${s.altToplam}</div>` : ''}</td>
-      <td><div class="kirp">${esc(s.altKategori)}</div></td>
       <td><div class="kirp">${esc(s.aksiyon)}</div></td>
       <td><div class="kirp">${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar && e.rol !== 'Yok' ? '' : 'yok'}" title="${e.katalogdaVar ? esc(e.rol) : 'Katalogda bulunamadı'}">${esc(e.ekip)}</span><span class="muted" style="font-size:11px">${e.rol === 'Yok' ? 'olması gereken işlev:' : esc(e.rol)}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || (s.hata ? `<span class="hata">${esc(s.hata)}</span>` : '<span class="muted">—</span>')}</div></td>
       <td><div class="kirp">${esc(s.gerekce)}</div></td>
@@ -583,12 +577,11 @@ function detayAc(sira) {
   $('#dIc').innerHTML = `
     <h3>Madde</h3>
     <dl>
-      <dt>Alt Kategori</dt><dd>${esc(s.altKategori)}</dd>
       <dt>Aksiyon / Kontrol</dt><dd>${esc(s.aksiyon)}</dd>
       ${s.alanlar.map(a => `<dt>${esc(a.ad)}</dt><dd>${esc(a.deger)}</dd>`).join('')}
     </dl>
-    <h3>Senin ön görüşün (ipucu olarak gönderildi)</h3>
-    <dl><dt>Ekipler (E)</dt><dd>${esc(s.kullaniciEkip) || '—'}</dd><dt>Mevcut süreç (F)</dt><dd>${esc(s.kullaniciNot) || '—'}</dd><dt>Uyum</dt><dd>${esc(s.uyum) || '—'}</dd></dl>
+    <h3>Tahmini ekip (ipucu olarak gönderildi)</h3>
+    <dl><dt>Tahmini Ekip</dt><dd>${esc(s.kullaniciEkip) || '—'}</dd><dt>Uyum</dt><dd>${esc(s.uyum) || '—'}</dd></dl>
     <h3>YZ önerisi ${s.guven != null ? '· güven %' + s.guven : ''}</h3>
     ${s.ekipler.map(e => `<div class="ekip"><span class="chip ${e.rol === 'Sorumlu' ? '' : 'destek'} ${e.katalogdaVar ? '' : 'yok'}">${esc(e.ekip)}</span> <span class="muted">${esc(e.rol)}${e.katalogdaVar ? '' : ' · katalogda bulunamadı'}</span><div class="gorev">${esc(e.gorev)}</div></div>`).join('') || '—'}
     <h3>Karar gerekçesi</h3><div style="white-space:pre-wrap">${esc(s.gerekce) || '—'}</div>

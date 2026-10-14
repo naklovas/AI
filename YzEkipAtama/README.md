@@ -33,7 +33,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 | `DusunmeyiKapat` | Qwen3 gibi düşünen modellerde `<think>` bölümünü kapatır (`chat_template_kwargs.enable_thinking=false`). Sunucu tanımazsa `false` yapın. |
 | `ServisAciklamasiGonder` / `ServisAciklamaMaksKarakter` | Katalogdaki servis açıklamaları (`SERVIS_ACIKLAMASI`) servis adının yanında gönderilir; her biri en fazla bu kadar karakter (`0` = tamamı). Prompt'u en çok büyüten ayar budur; sayfadaki "Prompt boyutu" kutusundan izleyin. |
 | `DenemeSayisi` | Hata alındığında veya yanıt ayrıştırılamadığında toplam deneme sayısı |
-| `ExcelAyarlari:KullaniciEkipKolonu / KullaniciNotKolonu` | Sizin doldurduğunuz E ve F kolonları. Bu kolonlar modele **yalnızca ipucu** olarak gider. |
+| `ExcelAyarlari:KontrolKolonu / TahminiEkipKolonu` | Kontrol listesi kolonları (varsayılan A = Kontrol, B = Tahmini Ekip). Tahmini ekip boş olabilir; modele **yalnızca ipucu** olarak gider. |
 
 ## Kullanım
 
@@ -42,7 +42,7 @@ Uygulama `http://localhost:5080` adresinde açılır.
 - **Yetki kontrolü:** `AppSettings:YetkiKontrolu = true` ise kullanıcı Windows kimliğiyle doğrulanır, `AuthHelper` ile DokuPanel'den `CurrentSiteName` için yetki listesi sorulur. Sonuç kullanıcı başına `YetkiOnbellekDakika` boyunca önbellekte tutulur. Yetkisiz kullanıcıya "Erişim Reddedildi" sayfası, API isteklerine 403 döner.
 - **Prosedürler:** Her madde için anahtar kelimeyle en ilgili `IlgiliProsedurSayisi` (varsayılan 15) prosedür, süreç sahibi birimiyle birlikte modele gönderilir. Süreç sahibi birim, katalogdaki ekiple eşleştirilir. Model ilgili prosedürleri `PROSEDUR: <doküman kodu> | <ilişki>` satırlarıyla döner; listede olmayan kodlar atılır. Sonuçlar gridde (linkli) ve Excel'de üçüncü kolon (*YZ İlgili Mevcut Prosedürler*) olarak gösterilir.
 - **Metinle sor** kartına yapılacak işi yazıp **Ekipleri Bul**'a basın. Sorumlu ve destek ekipler, her birinin görevi ve karar gerekçesi gösterilir. "Her satırı ayrı bir iş olarak değerlendir" seçiliyse her satır ayrı bir madde olur; baştaki `1.`, `-` gibi işaretler atılır. Sonuçlar gridde listelenir ve Excel olarak indirilebilir.
-- **Toplu analiz · Kontrol listesi** kartına kontrol listesi yüklenip **Analizi Başlat** ile bütün maddeler işlenir (dosya seçilmemişse düğme dosya seçtirir).
+- **Toplu analiz · Kontrol listesi:** Excel iki kolonludur: **A = Kontrol**, **B = Tahmini Ekip** (boş olabilir). İlk satır başlıksa atlanır; başlık yoksa çıktıya eklenir. Sonuçlar C, D (ve prosedür varsa E) kolonlarına yazılır. Kontrol listesi kartına yüklenip **Analizi Başlat** ile bütün maddeler işlenir (dosya seçilmemişse düğme dosya seçtirir).
 
 ## İsim benzerliği ve katalog dışı ekipler
 
@@ -71,10 +71,10 @@ Uygulama `http://localhost:5080` adresinde açılır.
 
 ## Akış
 
-1. Servis kataloğu ve prosedürler veritabanından okunur. Kontrol listesi Excel olarak yüklenir; başlık satırı ("Aksiyon/Kontrol") otomatik bulunur, birleştirilmiş hücreler desteklenir.
+1. Servis kataloğu ve prosedürler veritabanından okunur. Kontrol listesi iki kolonlu Excel olarak yüklenir (A = Kontrol, B = Tahmini Ekip).
 2. Katalog "Servis Sahibi Bölüm" bazında gruplanarak ekip profilleri çıkarılır.
-3. Her madde için anahtar kelime benzerliğiyle aday ekipler seçilir. E kolonunda yazdığınız ekipler her zaman adaylara eklenir. Ardından model çağrılır. Model `EKIP: ad | Sorumlu | görev`, `GUVEN: %80`, `GEREKCE: ...` satırlarıyla yanıt verir; JSON dönerse o da okunur. `<think>` blokları atlanır.
+3. Her madde için anahtar kelime benzerliğiyle aday ekipler seçilir. Tahmini ekip kolonundaki ekipler her zaman adaylara eklenir. Ardından model çağrılır. Model `EKIP: ad | Sorumlu | görev`, `GUVEN: %80`, `GEREKCE: ...` satırlarıyla yanıt verir; JSON dönerse o da okunur. `<think>` blokları atlanır.
 4. Modelin yazdığı ekip adı katalogla eşleştirilir (büyük-küçük harf, Türkçe karakter ve kısmi ad farkları tolere edilir). Katalogda bulunamayan ekip kırmızı ile işaretlenir.
 5. **Excel'i İndir** düğmesi, yüklediğiniz orijinal dosyanın sonuna iki kolon ekleyip indirir: *YZ Önerilen Ekipler ve Görevleri* ve *YZ Karar Gerekçesi*. Diğer hücrelere dokunulmaz. Çıktı dosyasını tekrar yüklerseniz bu iki kolon yeni kolon açılmadan güncellenir.
 
-Gridde arama, alt kategori, ekip, rol, durum ve güven aralığına göre filtreleme yapılabilir. Ayrıca E kolonundaki görüşünüzle karşılaştırma (Aynı / Kısmi / Farklı) gösterilir. Her madde tek tek yeniden çalıştırılabilir. Detay penceresinde modele gönderilen aday ekipler ve modelin ham yanıtı görülebilir.
+Gridde arama, ekip, rol, durum ve güven aralığına göre filtreleme yapılabilir. Ayrıca tahmini ekiple karşılaştırma (Aynı / Kısmi / Farklı) gösterilir. Her madde tek tek yeniden çalıştırılabilir. Detay penceresinde modele gönderilen aday ekipler ve modelin ham yanıtı görülebilir.
