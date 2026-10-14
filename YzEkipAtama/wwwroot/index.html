@@ -232,14 +232,31 @@ fetch('/api/ayarlar').then(r => r.json()).then(a => {
 let katalogVar = false;
 function katalogGoster(k) {
   katalogVar = !!k.var;
+  const dbDugme = k.veritabaniTanimli ? ` <button class="sm" id="btnKatalogDb" ${k.veritabaniOkunuyor ? 'disabled' : ''}>${k.veritabaniOkunuyor ? 'Veritabanından okunuyor…' : 'Veritabanından yenile'}</button>` : '';
+  const durumlar = (k.durumlar || []).length
+    ? `<details style="margin-top:4px"><summary>Kayıt durumları (filtre için)</summary>${k.durumlar.map(d => `<div>${esc(d.durum)}: <b>${d.adet}</b></div>`).join('')}</details>` : '';
   $('#katalogDurum').innerHTML = k.var
-    ? `Aktif katalog: <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}` +
-      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '')
-    : '<span class="hata">Henüz katalog yüklenmedi. Önce servis kataloğunu yükleyin.</span>';
+    ? `Aktif katalog (${esc(k.kaynak || 'Excel')}): <b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}${dbDugme}` +
+      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '') + durumlar
+    : (k.veritabaniOkunuyor ? 'Katalog veritabanından okunuyor…' : '<span class="hata">Henüz katalog yok. Excel yükleyin' + (k.veritabaniTanimli ? ' veya veritabanından okuyun.' : '.') + '</span>') + dbDugme;
   $('#dropKatalog').classList.toggle('dolu', katalogVar);
   butonlariGuncelle();
+  // Açılışta veritabanı okuması sürüyorsa bitene kadar yokla
+  if (k.veritabaniOkunuyor) setTimeout(katalogBilgisiAl, 2000);
 }
-fetch('/api/katalog').then(r => r.json()).then(k => { katalogGoster(k); prosedurBilgisiAl(); }).catch(() => {});
+function katalogBilgisiAl() { fetch('/api/katalog').then(r => r.json()).then(k => { katalogGoster(k); prosedurBilgisiAl(); }).catch(() => {}); }
+katalogBilgisiAl();
+$('#katalogDurum').addEventListener('click', async e => {
+  if (e.target.id !== 'btnKatalogDb') return;
+  e.target.disabled = true; e.target.textContent = 'Veritabanından okunuyor…';
+  $('#katalogHata').textContent = '';
+  try {
+    const r = await fetch('/api/katalog/veritabani', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.hata || r.statusText);
+    katalogGoster(j); prosedurBilgisiAl();
+  } catch (err) { $('#katalogHata').textContent = 'Hata: ' + err.message; katalogBilgisiAl(); }
+});
 
 function prosedurGoster(p) {
   $('#dropProsedur').classList.toggle('dolu', !!p.var);

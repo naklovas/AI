@@ -19,6 +19,7 @@ var excelAyar = builder.Configuration.GetSection("ExcelAyarlari").Get<ExcelAyarl
 
 builder.Services.AddSingleton(yzAyar);
 builder.Services.AddSingleton(excelAyar);
+builder.Services.AddSingleton(builder.Configuration.GetSection("KatalogVeritabani").Get<KatalogVeritabaniAyarlari>() ?? new KatalogVeritabaniAyarlari());
 builder.Services.AddSingleton<IsYoneticisi>();
 builder.Services.AddHttpClient("InsecureClient", c => c.Timeout = TimeSpan.FromMinutes(yzAyar.ZamanAsimiDakika))
     .ConfigurePrimaryHttpMessageHandler(() => yzAyar.SertifikaDogrulamasiniAtla
@@ -53,6 +54,19 @@ app.MapPost("/api/katalog", async (HttpRequest req, IsYoneticisi yonetici) =>
     try
     {
         yonetici.KatalogYukle(await OkuAsync(dosya), dosya.FileName);
+        return Results.Ok(yonetici.KatalogBilgisi());
+    }
+    catch (ExcelOkumaHatasi ex)
+    {
+        return Results.BadRequest(new { hata = ex.Message });
+    }
+});
+
+app.MapPost("/api/katalog/veritabani", (IsYoneticisi yonetici) =>
+{
+    try
+    {
+        yonetici.KatalogVeritabanindanYukle();
         return Results.Ok(yonetici.KatalogBilgisi());
     }
     catch (ExcelOkumaHatasi ex)
@@ -155,6 +169,25 @@ static async Task<byte[]> OkuAsync(IFormFile dosya)
 // =====================================================================
 
 record MetinSorusu(string? Metin, bool HerSatirAyriMadde);
+
+class KatalogVeritabaniAyarlari
+{
+    /// SQL Server bağlantı metni. Boşsa katalog yalnızca Excel'den yüklenir.
+    public string BaglantiMetni { get; set; } = "";
+    public string Tablo { get; set; } = "[SM9PROD].[dbo].[ZTSERVISKATALOGUM1]";
+    /// İsteğe bağlı WHERE koşulu (WHERE yazmadan), ör: DURUM = 'Aktif' AND RECORD_ACTIVE = 1
+    public string Filtre { get; set; } = "";
+    /// Doluysa Tablo/Filtre yerine bu sorgu çalışır. SERVIS_KODU, SERVIS_ADI, SERVIS_SAHIBI_BOLUM, YONETICILER,
+    /// SERVIS_KATEGORISI, SERVIS_ACIKLAMASI kolonlarını döndürmelidir.
+    public string Sorgu { get; set; } = "";
+    public int ZamanAsimiSaniye { get; set; } = 60;
+
+    public bool Tanimli => !string.IsNullOrWhiteSpace(BaglantiMetni);
+
+    public string SorguMetni() => !string.IsNullOrWhiteSpace(Sorgu) ? Sorgu :
+        "SELECT SERVIS_KODU, SERVIS_ADI, SERVIS_SAHIBI_BOLUM, YONETICILER, SERVIS_KATEGORISI, SERVIS_ACIKLAMASI, " +
+        $"DURUM, ONAY_DURUMU, RECORD_ACTIVE FROM {Tablo}" + (string.IsNullOrWhiteSpace(Filtre) ? "" : $" WHERE {Filtre}");
+}
 
 class EkEkip
 {
@@ -694,6 +727,41 @@ static class ExcelIslemleri
         return null;
     }
 
+    /// Servis kataloğunu SQL Server'dan okur. Dönen ek bilgi: DURUM / ONAY_DURUMU / RECORD_ACTIVE dağılımı (filtre belirlemek için).
+    public static (Katalog katalog, Dictionary<string, int> durumlar) KatalogVeritabanindanOku(KatalogVeritabaniAyarlari db, ExcelAyarlari ayar)
+    {
+        var servisler = new List<Servis>();
+        var durumlar = new Dictionary<string, int>();
+        try
+        {
+            using var baglanti = new Microsoft.Data.SqlClient.SqlConnection(db.BaglantiMetni);
+            baglanti.Open();
+            using var komut = new Microsoft.Data.SqlClient.SqlCommand(db.SorguMetni(), baglanti) { CommandTimeout = db.ZamanAsimiSaniye };
+            using var okuyucu = komut.ExecuteReader();
+
+            var kolonlar = Enumerable.Range(0, okuyucu.FieldCount).ToDictionary(i => okuyucu.GetName(i).ToUpperInvariant(), i => i);
+            string Al(string ad) => kolonlar.TryGetValue(ad, out var i) && !okuyucu.IsDBNull(i)
+                ? Regex.Replace(Convert.ToString(okuyucu.GetValue(i), CultureInfo.InvariantCulture) ?? "", @"\s+", " ").Trim() : "";
+            if (!kolonlar.ContainsKey("SERVIS_ADI") || !kolonlar.ContainsKey("SERVIS_SAHIBI_BOLUM"))
+                throw new ExcelOkumaHatasi("Katalog sorgusu SERVIS_ADI ve SERVIS_SAHIBI_BOLUM kolonlarını döndürmelidir.");
+
+            while (okuyucu.Read())
+            {
+                var sv = new Servis(Al("SERVIS_KODU"), Al("SERVIS_ADI"), Al("SERVIS_SAHIBI_BOLUM"), Al("YONETICILER"), Al("SERVIS_KATEGORISI"), Al("SERVIS_ACIKLAMASI"));
+                if (sv.Ad.Length == 0 || sv.Bolum.Length == 0) continue;
+                servisler.Add(sv);
+                var durum = string.Join(" / ", new[] { "DURUM", "ONAY_DURUMU", "RECORD_ACTIVE" }
+                    .Where(kolonlar.ContainsKey).Select(k => $"{k}={(Al(k) is { Length: > 0 } d ? d : "(boş)")}"));
+                if (durum.Length > 0) durumlar[durum] = durumlar.GetValueOrDefault(durum) + 1;
+            }
+        }
+        catch (Microsoft.Data.SqlClient.SqlException ex)
+        {
+            throw new ExcelOkumaHatasi($"Servis kataloğu veritabanından okunamadı: {ex.Message}");
+        }
+        return (KatalogOlustur(servisler, ayar), durumlar);
+    }
+
     public static Katalog KatalogOku(byte[] bytes, ExcelAyarlari ayar)
     {
         using var wb = Ac(bytes, "Servis kataloğu");
@@ -723,6 +791,12 @@ static class ExcelIslemleri
             if (sv.Ad.Length > 0 && sv.Bolum.Length > 0) servisler.Add(sv);
         }
 
+        return KatalogOlustur(servisler, ayar);
+    }
+
+    /// Servis listesinden katalog kurar; ayarlardaki ek görev tanımlarını ekler (Excel ve veritabanı için ortak)
+    public static Katalog KatalogOlustur(List<Servis> servisler, ExcelAyarlari ayar)
+    {
         if (servisler.Count == 0) throw new ExcelOkumaHatasi("Servis kataloğunda hiç ekip (Servis Sahibi Bölüm) bulunamadı.");
 
         // Katalogda olmayan ama kurumda var olan ekipler; adı katalogdaki bir ekiple eşleşirse o ekibe görev tanımı olarak eklenir
@@ -1234,9 +1308,15 @@ class IsYoneticisi
     DateTime prosedurZamani;
     ProsedurKutuphanesi? kutuphane;   // katalog veya prosedür listesi değişince yeniden kurulur
 
-    public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env)
+    readonly KatalogVeritabaniAyarlari db;
+    string katalogKaynak = "";                       // "Excel" veya "Veritabanı"
+    Dictionary<string, int> katalogDurumlari = [];
+    volatile bool veritabaniOkunuyor;
+
+    public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log, IWebHostEnvironment env,
+        KatalogVeritabaniAyarlari db)
     {
-        (this.ayar, this.excelAyar, this.httpFactory, this.log) = (ayar, excelAyar, httpFactory, log);
+        (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db) = (ayar, excelAyar, httpFactory, log, db);
         var klasor = Path.Combine(env.ContentRootPath, "veri");
         katalogYolu = Path.Combine(klasor, "son_katalog.xlsx");
         katalogAdYolu = Path.Combine(klasor, "son_katalog_adi.txt");
@@ -1259,16 +1339,38 @@ class IsYoneticisi
                 katalog = ExcelIslemleri.KatalogOku(File.ReadAllBytes(katalogYolu), excelAyar);
                 katalogAdi = File.Exists(katalogAdYolu) ? File.ReadAllText(katalogAdYolu).Trim() : "son_katalog.xlsx";
                 katalogZamani = File.GetLastWriteTime(katalogYolu);
+                katalogKaynak = "Excel";
             }
             catch (Exception ex) { log.LogWarning("Kayıtlı katalog okunamadı: {Hata}", ex.Message); }
         }
+        // Veritabanı tanımlıysa açılışta katalog oradan (arka planda) yenilenir; olmazsa son Excel katalogu kullanılır
+        veritabaniOkunuyor = db.Tanimli;
+        if (db.Tanimli) _ = Task.Run(() => { try { KatalogVeritabanindanYukle(); } catch (Exception ex) { log.LogWarning("Katalog veritabanından okunamadı: {Hata}", ex.Message); } });
+    }
+
+    public void KatalogVeritabanindanYukle()
+    {
+        if (!db.Tanimli) throw new ExcelOkumaHatasi("appsettings.json: KatalogVeritabani:BaglantiMetni tanımlı değil.");
+        veritabaniOkunuyor = true;
+        try
+        {
+            var (yeni, durumlar) = ExcelIslemleri.KatalogVeritabanindanOku(db, excelAyar);
+            (katalog, katalogAdi, katalogZamani, kutuphane, katalogKaynak, katalogDurumlari) =
+                (yeni, db.Tablo, DateTime.Now, null, "Veritabanı", durumlar);
+            log.LogInformation("Katalog veritabanından okundu: {Ekip} ekip", yeni.Ekipler.Count);
+        }
+        finally { veritabaniOkunuyor = false; }
     }
 
     public object KatalogBilgisi() => katalog is null
-        ? new { var = false }
+        ? new { var = false, veritabaniTanimli = db.Tanimli, veritabaniOkunuyor }
         : new
         {
             var = true,
+            veritabaniTanimli = db.Tanimli,
+            veritabaniOkunuyor,
+            kaynak = katalogKaynak,
+            durumlar = katalogDurumlari.OrderByDescending(d => d.Value).Select(d => new { durum = d.Key, adet = d.Value }),
             dosyaAdi = katalogAdi,
             yuklenme = katalogZamani,
             ekipSayisi = katalog.Ekipler.Count,
@@ -1280,7 +1382,7 @@ class IsYoneticisi
     public void KatalogYukle(byte[] bytes, string dosyaAdi)
     {
         var yeni = ExcelIslemleri.KatalogOku(bytes, excelAyar);
-        (katalog, katalogAdi, katalogZamani, kutuphane) = (yeni, dosyaAdi, DateTime.Now, null);
+        (katalog, katalogAdi, katalogZamani, kutuphane, katalogKaynak, katalogDurumlari) = (yeni, dosyaAdi, DateTime.Now, null, "Excel", []);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(katalogYolu)!);
