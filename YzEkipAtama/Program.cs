@@ -34,6 +34,7 @@ builder.Services.AddSingleton(yzAyar);
 builder.Services.AddSingleton(excelAyar);
 builder.Services.AddSingleton(builder.Configuration.GetSection("KatalogVeritabani").Get<KatalogVeritabaniAyarlari>() ?? new KatalogVeritabaniAyarlari());
 builder.Services.AddSingleton(builder.Configuration.GetSection("ProsedurVeritabani").Get<ProsedurVeritabaniAyarlari>() ?? new ProsedurVeritabaniAyarlari());
+builder.Services.AddSingleton(builder.Configuration.GetSection("AnahtarKelimeVeritabani").Get<AnahtarKelimeVeritabaniAyarlari>() ?? new AnahtarKelimeVeritabaniAyarlari());
 builder.Services.AddSingleton<IsYoneticisi>();
 builder.Services.AddHttpClient("InsecureClient", c => c.Timeout = TimeSpan.FromMinutes(yzAyar.ZamanAsimiDakika))
     .ConfigurePrimaryHttpMessageHandler(() => yzAyar.SertifikaDogrulamasiniAtla
@@ -200,6 +201,23 @@ static async Task<byte[]> OkuAsync(IFormFile dosya)
 
 record MetinSorusu(string? Metin, bool HerSatirAyriMadde);
 
+class AnahtarKelimeVeritabaniAyarlari
+{
+    /// Boşsa ProsedurVeritabani:BaglantiMetni kullanılır (ikisi de doku veritabanında)
+    public string BaglantiMetni { get; set; } = "";
+    public string Tablo { get; set; } = "[doku].[dbo].[servicekeywords]";
+    public string Filtre { get; set; } = "";
+    /// Doluysa Tablo/Filtre yerine bu sorgu çalışır. Kolonlar adlarına göre bulunur
+    /// (Servis Kodu, Servis Adı, Ekip Adı, Anahtar Kelimeler, Servis Açıklaması).
+    public string Sorgu { get; set; } = "";
+    public int ZamanAsimiSaniye { get; set; } = 60;
+    /// false ise anahtar kelime tablosu hiç okunmaz
+    public bool Kullan { get; set; } = true;
+
+    public string SorguMetni() => !string.IsNullOrWhiteSpace(Sorgu) ? Sorgu :
+        $"SELECT * FROM {Tablo}" + (string.IsNullOrWhiteSpace(Filtre) ? "" : $" WHERE {Filtre}");
+}
+
 class ProsedurVeritabaniAyarlari
 {
     /// SQL Server bağlantı metni (doku veritabanı). Boşsa prosedür listesi yalnızca Excel'den yüklenir.
@@ -264,6 +282,8 @@ class YzAyarlari
     public int ServisAciklamaMaksKarakter { get; set; } = 250;
     /// Prosedür listesi yüklüyse her maddeyle en ilgili kaç prosedür modele gönderilsin (0 = gönderme)
     public int IlgiliProsedurSayisi { get; set; } = 15;
+    /// Prompt'ta her ekip için gönderilecek anahtar kelime satırının en fazla karakter sayısı (0 = sınırsız)
+    public int AnahtarKelimeMaksKarakter { get; set; } = 400;
     /// Adı çok genel olduğu için her işi kendine çeken ekipler; prompt'ta bu ekipler için ayrıca uyarı verilir
     public List<string>? GenelAdliEkipler { get; set; }
     public List<string> GenelEkipler() => GenelAdliEkipler ?? ["YAPAY ZEKA UYGULAMALARI"];
@@ -304,7 +324,10 @@ class ExcelAyarlari
 // MODELLER
 // =====================================================================
 
-record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kategori, string Aciklama);
+record Servis(string Kod, string Ad, string Bolum, string Yonetici, string Kategori, string Aciklama, string AnahtarKelimeler = "");
+
+/// [doku].[dbo].[servicekeywords] satırı: bir servisin / ekibin yaptığı işler anahtar kelime olarak
+record AnahtarKelimeKaydi(string ServisKodu, string ServisAdi, string EkipAdi, List<string> Kelimeler, string Aciklama);
 
 record Mesaj(string role, string content);
 
@@ -341,6 +364,11 @@ class Ekip
     public HashSet<string> AdKokleri { get; set; } = [];
     public Dictionary<string, double> Kokler { get; } = [];
     public double Uzunluk { get; set; }
+
+    /// Ekibin servislerine bağlı anahtar kelimelerin tekrarsız listesi
+    public List<string> AnahtarKelimeler() => Servisler
+        .SelectMany(sv => sv.AnahtarKelimeler.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        .DistinctBy(Metin.Normalize).ToList();
 }
 
 class KontrolSatiri
@@ -518,6 +546,8 @@ class Katalog
                     e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 1;
                 foreach (var k in Metin.Kokler(sv.Aciklama))
                     e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 0.5; // açıklama daha uzun ve gürültülü
+                foreach (var k in Metin.Kokler(sv.AnahtarKelimeler))
+                    e.Kokler[k] = e.Kokler.GetValueOrDefault(k) + 2;   // anahtar kelimeler ekibin fiilen yaptığı işi gösterir
             }
             e.Uzunluk = e.Kokler.Values.Sum();
         }
@@ -618,7 +648,8 @@ class Katalog
     public IEnumerable<Servis> IlgiliServisler(Ekip e, Dictionary<string, double> q) =>
         e.Servisler.OrderByDescending(sv =>
             Metin.Kokler(sv.Ad).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0) +
-            0.5 * Metin.Kokler(sv.Aciklama).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0));
+            0.5 * Metin.Kokler(sv.Aciklama).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0) +
+            Metin.Kokler(sv.AnahtarKelimeler).Distinct().Sum(k => q.TryGetValue(k, out var w) ? w * idf.GetValueOrDefault(k) : 0));
 }
 
 // =====================================================================
@@ -773,7 +804,7 @@ static class ExcelIslemleri
     }
 
     /// Servis kataloğunu SQL Server'dan okur. Dönen ek bilgi: DURUM / ONAY_DURUMU / RECORD_ACTIVE dağılımı (filtre belirlemek için).
-    public static (Katalog katalog, Dictionary<string, int> durumlar) KatalogVeritabanindanOku(KatalogVeritabaniAyarlari db, ExcelAyarlari ayar)
+    public static (List<Servis> servisler, Dictionary<string, int> durumlar) KatalogVeritabanindanOku(KatalogVeritabaniAyarlari db)
     {
         var servisler = new List<Servis>();
         var durumlar = new Dictionary<string, int>();
@@ -804,7 +835,84 @@ static class ExcelIslemleri
         {
             throw new ExcelOkumaHatasi($"Servis kataloğu veritabanından okunamadı: {ex.Message}");
         }
-        return (KatalogOlustur(servisler, ayar), durumlar);
+        return (servisler, durumlar);
+    }
+
+    /// Anahtar kelime tablosunu okur. Kolonlar adlarına göre bulunur ("Anahtar Keilmeler" gibi yazım hataları da tanınır).
+    public static List<AnahtarKelimeKaydi> AnahtarKelimeleriOku(string baglantiMetni, AnahtarKelimeVeritabaniAyarlari db)
+    {
+        var liste = new List<AnahtarKelimeKaydi>();
+        try
+        {
+            using var baglanti = new Microsoft.Data.SqlClient.SqlConnection(baglantiMetni);
+            baglanti.Open();
+            using var komut = new Microsoft.Data.SqlClient.SqlCommand(db.SorguMetni(), baglanti) { CommandTimeout = db.ZamanAsimiSaniye };
+            using var okuyucu = komut.ExecuteReader();
+
+            var kolonlar = Enumerable.Range(0, okuyucu.FieldCount).Select(i => (i, ad: Metin.Normalize(okuyucu.GetName(i)))).ToList();
+            int Kolon(Func<string, bool> kosul) => kolonlar.FirstOrDefault(k => kosul(k.ad)) is { ad: not null } k ? k.i : -1;
+            int kod = Kolon(a => a.Contains("servis kod")), ad = Kolon(a => a.Contains("servis ad")),
+                ekip = Kolon(a => a.Contains("ekip ad") || a == "ekip"), kelime = Kolon(a => a.Contains("anahtar") || a.Contains("keyword")),
+                aciklama = Kolon(a => a.Contains("aciklama"));
+            if (kelime < 0 || (kod < 0 && ekip < 0))
+                throw new ExcelOkumaHatasi("Anahtar kelime tablosunda 'Anahtar Kelimeler' ve 'Servis Kodu' veya 'Ekip Adı' kolonları bulunamadı.");
+
+            string Al(int i) => i >= 0 && !okuyucu.IsDBNull(i)
+                ? Regex.Replace(Convert.ToString(okuyucu.GetValue(i), CultureInfo.InvariantCulture) ?? "", @"[ \t]+", " ").Trim() : "";
+            while (okuyucu.Read())
+            {
+                var kelimeler = Regex.Split(Al(kelime), @"[,;|\n\r]+").Select(k => k.Trim().Trim('-', '•', '.')).Where(k => k.Length > 1).ToList();
+                if (kelimeler.Count == 0) continue;
+                liste.Add(new AnahtarKelimeKaydi(Al(kod), Al(ad), Al(ekip), kelimeler, Regex.Replace(Al(aciklama), @"\s+", " ")));
+            }
+        }
+        catch (Microsoft.Data.SqlClient.SqlException ex)
+        {
+            throw new ExcelOkumaHatasi($"Anahtar kelime tablosu okunamadı: {ex.Message}");
+        }
+        return liste;
+    }
+
+    /// Anahtar kelimeleri servislere bağlar: önce Servis Kodu, sonra Servis Adı; ikisi de tutmazsa Ekip Adı üzerinden
+    /// o ekibe ayrı bir servis kaydı olarak eklenir. Dönen sayılar arayüzde gösterilir.
+    public static (List<Servis> servisler, int servise, int ekibe, List<string> eslesmeyen) AnahtarKelimeleriBagla(
+        List<Servis> servisler, List<AnahtarKelimeKaydi> kayitlar)
+    {
+        var sonuc = servisler.ToList();
+        var kodIndeks = new Dictionary<string, int>();
+        var adIndeks = new Dictionary<string, int>();
+        for (int i = 0; i < sonuc.Count; i++)
+        {
+            var k = Metin.Normalize(sonuc[i].Kod); if (k.Length > 0) kodIndeks.TryAdd(k, i);
+            var a = Metin.Normalize(sonuc[i].Ad); if (a.Length > 0) adIndeks.TryAdd(a, i);
+        }
+        var gecici = new Katalog(servisler);
+        int servise = 0, ekibe = 0;
+        var eslesmeyen = new List<string>();
+        static string Birlestir(string mevcut, IEnumerable<string> yeni) =>
+            string.Join(", ", mevcut.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Concat(yeni).DistinctBy(Metin.Normalize));
+
+        foreach (var kayit in kayitlar)
+        {
+            if (kodIndeks.TryGetValue(Metin.Normalize(kayit.ServisKodu), out var i) || adIndeks.TryGetValue(Metin.Normalize(kayit.ServisAdi), out i))
+            {
+                var sv = sonuc[i];
+                sonuc[i] = sv with
+                {
+                    AnahtarKelimeler = Birlestir(sv.AnahtarKelimeler, kayit.Kelimeler),
+                    Aciklama = sv.Aciklama.Length > 0 ? sv.Aciklama : kayit.Aciklama
+                };
+                servise++;
+            }
+            else if (gecici.EkipBul(kayit.EkipAdi) is { } ekip)
+            {
+                sonuc.Add(new Servis(kayit.ServisKodu, kayit.ServisAdi.Length > 0 ? kayit.ServisAdi : "Ekibin işleri", ekip.Ad, "",
+                    "Anahtar kelime kaydı", kayit.Aciklama, string.Join(", ", kayit.Kelimeler)));
+                ekibe++;
+            }
+            else eslesmeyen.Add(kayit.EkipAdi.Length > 0 ? kayit.EkipAdi : kayit.ServisKodu);
+        }
+        return (sonuc, servise, ekibe, eslesmeyen.Distinct().ToList());
     }
 
     /// Servis listesinden katalog kurar; ayarlardaki ek görev tanımlarını ekler
@@ -1064,6 +1172,11 @@ static class PromptOlusturucu
         foreach (var e in adaylar)
         {
             sb.AppendLine($"### {e.Etiket}");
+            if (e.AnahtarKelimeler() is { Count: > 0 } kelimeler)
+            {
+                var satir = string.Join(", ", kelimeler);
+                sb.AppendLine($"  Anahtar kelimeler (ekibin fiilen yaptığı işler): {(ayar.AnahtarKelimeMaksKarakter > 0 ? Metin.Kisalt(satir, ayar.AnahtarKelimeMaksKarakter) : satir)}");
+            }
             var servisler = tumu ? e.Servisler : katalog.IlgiliServisler(e, q);
             foreach (var sv in servisler.Take(servisSiniri))
                 sb.AppendLine(ayar.ServisAciklamasiGonder && sv.Aciklama.Length > 0
@@ -1115,7 +1228,7 @@ static class PromptOlusturucu
         }
 
         sb.AppendLine($@"KURALLAR:
-1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı bu işe uyan ekibi seç.
+1. Bu maddeyi hayata geçirmek, uygulamak ve sürdürmek için işi FİİLEN yapması gereken ekip(ler)i seç. Sadece adı benzeyen ekibi değil, servis kataloğundaki görev alanı ve ""Anahtar kelimeler"" satırı (ekibin fiilen yaptığı işler) bu işe uyan ekibi seç.
 1a. İSİM BENZERLİĞİ TUZAĞI (ÇOK KRİTİK): Bu maddelerin TAMAMI zaten yapay zeka geliştirme sürecine aittir. Bu yüzden maddede ""yapay zeka"", ""YZ"", ""model"" geçmesi veya ekip adında ""Yapay Zeka"" bulunması, işi o ekibe vermek için TEK BAŞINA SEBEP DEĞİLDİR.
     Ekibi işin TÜRÜNE ve servis kataloğundaki görev alanına göre seç; örneğin risk konusu risk yönetimi işlevi olan ekibe, güvenlik testi bilgi güvenliğine, kişisel veri veri yönetişimine/KVKK'ya, altyapı işi altyapı ekibine, değişiklik ve sürüm işi değişiklik yönetimine aittir.
     DENGE: Hiçbir ekip ""varsayılan"" veya ""her şeyin sahibi"" değildir. Bir ekibi yalnızca servis adları/açıklamaları{(prosedurVar ? "/prosedürleri" : "")} maddenin konusuyla DOĞRUDAN uyuşuyorsa seç; maddede geçen genel kelimeler (süreç, koordinasyon, planlama, yönetim, çerçeve, yapay zeka) tek başına sebep değildir.
@@ -1323,14 +1436,17 @@ class IsYoneticisi
 
     readonly KatalogVeritabaniAyarlari db;
     readonly ProsedurVeritabaniAyarlari prosedurDb;
+    readonly AnahtarKelimeVeritabaniAyarlari anahtarDb;
     volatile bool prosedurOkunuyor;
+    // Anahtar kelime tablosunun son okunuşunun özeti (arayüzde gösterilir)
+    object? anahtarOzet;
     Dictionary<string, int> katalogDurumlari = [];
     volatile bool veritabaniOkunuyor;
 
     public IsYoneticisi(YzAyarlari ayar, ExcelAyarlari excelAyar, IHttpClientFactory httpFactory, ILogger<IsYoneticisi> log,
-        KatalogVeritabaniAyarlari db, ProsedurVeritabaniAyarlari prosedurDb)
+        KatalogVeritabaniAyarlari db, ProsedurVeritabaniAyarlari prosedurDb, AnahtarKelimeVeritabaniAyarlari anahtarDb)
     {
-        (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db, this.prosedurDb) = (ayar, excelAyar, httpFactory, log, db, prosedurDb);
+        (this.ayar, this.excelAyar, this.httpFactory, this.log, this.db, this.prosedurDb, this.anahtarDb) = (ayar, excelAyar, httpFactory, log, db, prosedurDb, anahtarDb);
         // Açılışta katalog ve prosedürler arka planda veritabanından okunur
         prosedurOkunuyor = prosedurDb.Tanimli;
         if (prosedurDb.Tanimli) _ = Task.Run(() => { try { ProsedurVeritabanindanYukle(); } catch (Exception ex) { prosedurOkunuyor = false; log.LogWarning("Prosedürler veritabanından okunamadı: {Hata}", ex.Message); } });
@@ -1344,11 +1460,35 @@ class IsYoneticisi
         veritabaniOkunuyor = true;
         try
         {
-            var (yeni, durumlar) = ExcelIslemleri.KatalogVeritabanindanOku(db, excelAyar);
+            var (servisler, durumlar) = ExcelIslemleri.KatalogVeritabanindanOku(db);
+            servisler = AnahtarKelimeleriEkle(servisler);
+            var yeni = ExcelIslemleri.KatalogOlustur(servisler, excelAyar);
             (katalog, katalogAdi, katalogZamani, kutuphane, katalogDurumlari) = (yeni, db.Tablo, DateTime.Now, null, durumlar);
             log.LogInformation("Katalog veritabanından okundu: {Ekip} ekip", yeni.Ekipler.Count);
         }
         finally { veritabaniOkunuyor = false; }
+    }
+
+    /// Anahtar kelime tablosunu okuyup servislere bağlar; okunamazsa katalog anahtar kelimesiz devam eder
+    List<Servis> AnahtarKelimeleriEkle(List<Servis> servisler)
+    {
+        var baglanti = string.IsNullOrWhiteSpace(anahtarDb.BaglantiMetni) ? prosedurDb.BaglantiMetni : anahtarDb.BaglantiMetni;
+        if (!anahtarDb.Kullan || string.IsNullOrWhiteSpace(baglanti)) { anahtarOzet = null; return servisler; }
+        try
+        {
+            var kayitlar = ExcelIslemleri.AnahtarKelimeleriOku(baglanti, anahtarDb);
+            var (sonuc, servise, ekibe, eslesmeyen) = ExcelIslemleri.AnahtarKelimeleriBagla(servisler, kayitlar);
+            anahtarOzet = new { tablo = anahtarDb.Tablo, kayit = kayitlar.Count, servise, ekibe, eslesmeyen = eslesmeyen.Count, eslesmeyenler = eslesmeyen.Take(30) };
+            log.LogInformation("Anahtar kelimeler: {Kayit} kayıt, {Servise} servise, {Ekibe} ekibe bağlandı, {Eslesmeyen} eşleşmedi",
+                kayitlar.Count, servise, ekibe, eslesmeyen.Count);
+            return sonuc;
+        }
+        catch (Exception ex)
+        {
+            anahtarOzet = new { tablo = anahtarDb.Tablo, hata = ex.Message };
+            log.LogWarning("Anahtar kelime tablosu okunamadı: {Hata}", ex.Message);
+            return servisler;
+        }
     }
 
     public object KatalogBilgisi() => katalog is null
@@ -1364,7 +1504,8 @@ class IsYoneticisi
             ekipSayisi = katalog.Ekipler.Count,
             servisSayisi = katalog.Ekipler.Sum(e => e.Servisler.Count),
             aciklamaliServis = katalog.Ekipler.Sum(e => e.Servisler.Count(sv => sv.Aciklama.Length > 0 && sv.Kod != "EK")),
-            ekTanimliEkipler = katalog.Ekipler.Where(e => e.Servisler.Any(sv => sv.Kod == "EK")).Select(e => e.Ad)
+            ekTanimliEkipler = katalog.Ekipler.Where(e => e.Servisler.Any(sv => sv.Kod == "EK")).Select(e => e.Ad),
+            anahtarKelime = anahtarOzet
         };
 
     public void ProsedurVeritabanindanYukle()

@@ -266,13 +266,20 @@ function katalogGoster(k) {
     ? `<details style="margin-top:4px"><summary>Kayıt durumları (filtre için)</summary>${k.durumlar.map(d => `<div>${esc(d.durum)}: <b>${d.adet}</b></div>`).join('')}</details>` : '';
   $('#katalogDurum').innerHTML = k.var
     ? `<b>${esc(k.dosyaAdi)}</b> · ${k.ekipSayisi} ekip, ${k.servisSayisi} servis (${k.aciklamaliServis} açıklamalı) · ${new Date(k.yuklenme).toLocaleString('tr-TR')}${dbDugme}` +
-      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '') + durumlar
+      (k.ekTanimliEkipler && k.ekTanimliEkipler.length ? `<div>Ayarlardan görev tanımı eklenen: ${k.ekTanimliEkipler.map(esc).join(', ')}</div>` : '') +
+      anahtarKelimeMetni(k.anahtarKelime) + durumlar
     : (k.veritabaniOkunuyor ? 'Katalog veritabanından okunuyor…'
        : k.veritabaniTanimli ? '<span class="hata">Katalog okunamadı. Bağlantıyı kontrol edip tekrar deneyin.</span>'
        : '<span class="hata">appsettings.json içinde KatalogVeritabani:BaglantiMetni tanımlı değil.</span>') + dbDugme;
   butonlariGuncelle();
   // Açılışta veritabanı okuması sürüyorsa bitene kadar yokla
   if (k.veritabaniOkunuyor) setTimeout(katalogBilgisiAl, 2000);
+}
+function anahtarKelimeMetni(a) {
+  if (!a) return '';
+  if (a.hata) return `<div class="hata">Anahtar kelimeler okunamadı: ${esc(a.hata)}</div>`;
+  const eslesmeyen = a.eslesmeyen ? ` · <span class="hata" title="${esc((a.eslesmeyenler || []).join(', '))}">${a.eslesmeyen} ekip/servis eşleşmedi</span>` : '';
+  return `<div>Anahtar kelimeler: <b>${a.kayit}</b> kayıt · ${a.servise} servise, ${a.ekibe} ekibe bağlandı${eslesmeyen}</div>`;
 }
 function katalogBilgisiAl() { fetch('/api/katalog').then(r => r.json()).then(k => { katalogGoster(k); prosedurBilgisiAl(); }).catch(() => {}); }
 katalogBilgisiAl();
